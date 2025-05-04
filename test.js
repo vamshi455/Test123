@@ -1,4 +1,4 @@
--- Create the Interpolate function with overflow handling
+-- Create the Interpolate function (unchanged)
 CREATE OR REPLACE FUNCTION RMDE_SAM_ACC.Interpolate(x FLOAT, x1 FLOAT, x2 FLOAT, y1 FLOAT, y2 FLOAT)
 RETURNS FLOAT
 AS
@@ -6,19 +6,19 @@ $$
     CASE 
         WHEN x1 = x2 THEN NULL
         WHEN x < x1 OR x > x2 THEN NULL
-        WHEN ABS(y1) > 1E15 OR ABS(y2) > 1E15 THEN NULL -- Prevent overflow
+        WHEN ABS(y1) > 1E15 OR ABS(y2) > 1E15 THEN NULL
         ELSE y1 + (x - x1) * (y2 - y1) / (x2 - x1)
     END
 $$;
 
--- Create the Extrapolate function with overflow handling
+-- Create the Extrapolate function (unchanged)
 CREATE OR REPLACE FUNCTION RMDE_SAM_ACC.Extrapolate(x FLOAT, x1 FLOAT, x2 FLOAT, y1 FLOAT, y2 FLOAT)
 RETURNS FLOAT
 AS
 $$
     CASE 
         WHEN x1 = x2 THEN NULL
-        WHEN ABS(y1) > 1E15 OR ABS(y2) > 1E15 THEN NULL -- Prevent overflow
+        WHEN ABS(y1) > 1E15 OR ABS(y2) > 1E15 THEN NULL
         ELSE y2 + (x - x2) * (y1 - y2) / (x1 - x2)
     END
 $$;
@@ -116,7 +116,10 @@ $$
             }
         }
 
-        // Step 4: Find ExactMatch
+        // Step 4: Sort pvtWithEndDate explicitly by TEST_DATE DESC to ensure correct ordering
+        pvtWithEndDate.sort((a, b) => new Date(b.TEST_DATE) - new Date(a.TEST_DATE));
+
+        // Step 5: Find ExactMatch (most recent record where PRESSURE matches)
         let exactMatch = null;
         for (const record of pvtWithEndDate) {
             if (record.PRESSURE === pressure && record.ID_COMPLETION === completion && new Date(record.TEST_DATE) <= new Date(lastDay)) {
@@ -125,7 +128,7 @@ $$
             }
         }
 
-        // Step 5: Find Lowerbound
+        // Step 6: Find Lowerbound (most recent record where PRESSURE < pressure)
         let lowerbound = null;
         for (const record of pvtWithEndDate) {
             if (record.PRESSURE < pressure && record.ID_COMPLETION === completion && new Date(record.TEST_DATE) <= new Date(lastDay)) {
@@ -134,7 +137,7 @@ $$
             }
         }
 
-        // Step 6: Find Upperbound
+        // Step 7: Find Upperbound (most recent record where PRESSURE > pressure)
         let upperbound = null;
         for (const record of pvtWithEndDate) {
             if (record.PRESSURE > pressure && record.ID_COMPLETION === completion && new Date(record.TEST_DATE) <= new Date(lastDay)) {
@@ -143,7 +146,7 @@ $$
             }
         }
 
-        // Step 7: Find SecondBound
+        // Step 8: Find SecondBound (most recent record where PRESSURE < upperbound.PRESSURE)
         let secondBound = null;
         if (upperbound) {
             for (const record of pvtWithEndDate) {
@@ -154,7 +157,7 @@ $$
             }
         }
 
-        // Step 8: Compute the interpolated or extrapolated values
+        // Step 9: Compute the interpolated or extrapolated values
         let result = {};
         if (exactMatch) {
             result = {
@@ -273,7 +276,7 @@ $$
             };
         }
 
-        // Step 9: Round the results to 5 decimal places
+        // Step 10: Round the results to 5 decimal places
         const roundedResult = {
             PRESSURE: Math.round(result.PRESSURE * 100000) / 100000,
             OIL_FORMATION_VOLUME_FACTOR: result.OIL_FORMATION_VOLUME_FACTOR ? Math.round(result.OIL_FORMATION_VOLUME_FACTOR * 100000) / 100000 : null,
@@ -287,7 +290,7 @@ $$
             INJECTED_WATER_FORMATION_VOLUME_FACTOR: result.INJECTED_WATER_FORMATION_VOLUME_FACTOR ? Math.round(result.INJECTED_WATER_FORMATION_VOLUME_FACTOR * 100000) / 100000 : null
         };
 
-        // Step 10: Write the result to the output table
+        // Step 11: Write the result to the output table
         rowWriter.writeRow(roundedResult);
     }
 }
