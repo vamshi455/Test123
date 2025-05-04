@@ -71,14 +71,18 @@ $$
         }
 
         // Step 3: Compute END_DATE for each record (equivalent to PVTwithEndDate CTE)
+        // Sort by TEST_DATE ASC to compute END_DATE correctly
+        const basePVTDataAsc = [...basePVTData].sort((a, b) => new Date(a.TEST_DATE) - new Date(b.TEST_DATE));
         const pvtWithEndDate = [];
-        for (let i = 0; i < basePVTData.length; i++) {
-            const record = basePVTData[i];
+        for (let i = 0; i < basePVTDataAsc.length; i++) {
+            const record = basePVTDataAsc[i];
             let nextTestDate = null;
-            if (i < basePVTData.length - 1 && basePVTData[i + 1].ID_COMPLETION === record.ID_COMPLETION) {
-                nextTestDate = basePVTData[i + 1].TEST_DATE;
+            if (i < basePVTDataAsc.length - 1 && basePVTDataAsc[i + 1].ID_COMPLETION === record.ID_COMPLETION) {
+                nextTestDate = basePVTDataAsc[i + 1].TEST_DATE;
             }
             const endDate = nextTestDate || '9999-12-31';
+
+            // Apply the LAST_DAY(vrr_date, 'MONTH') < END_DATE filter
             if (new Date(lastDay) < new Date(endDate)) {
                 pvtWithEndDate.push({
                     ...record,
@@ -297,8 +301,22 @@ $$
                 INJECTED_GAS_FORMATION_VOLUME_FACTOR: extrapolateResult.getColumnValue("INJECTED_GAS_FORMATION_VOLUME_FACTOR"),
                 INJECTED_WATER_FORMATION_VOLUME_FACTOR: extrapolateResult.getColumnValue("INJECTED_WATER_FORMATION_VOLUME_FACTOR")
             };
+        } else if (lowestBound) {
+            // If we have at least one bound, use its values directly
+            result = {
+                PRESSURE: pressure,
+                OIL_FORMATION_VOLUME_FACTOR: lowestBound.OIL_FORMATION_VOLUME_FACTOR,
+                GAS_FORMATION_VOLUME_FACTOR: lowestBound.GAS_FORMATION_VOLUME_FACTOR,
+                WATER_FORMATION_VOLUME_FACTOR: lowestBound.WATER_FORMATION_VOLUME_FACTOR,
+                SOLUTION_GAS_OIL_RATIO: lowestBound.SOLUTION_GAS_OIL_RATIO,
+                VISCOSITY_OIL: lowestBound.VISCOSITY_OIL,
+                VISCOSITY_WATER: lowestBound.VISCOSITY_WATER,
+                VISCOSITY_GAS: lowestBound.VISCOSITY_GAS,
+                INJECTED_GAS_FORMATION_VOLUME_FACTOR: lowestBound.INJECTED_GAS_FORMATION_VOLUME_FACTOR,
+                INJECTED_WATER_FORMATION_VOLUME_FACTOR: lowestBound.INJECTED_WATER_FORMATION_VOLUME_FACTOR
+            };
         } else {
-            // If no extrapolation or interpolation is possible, return nulls
+            // If no data is available, return nulls
             result = {
                 PRESSURE: pressure,
                 OIL_FORMATION_VOLUME_FACTOR: null,
