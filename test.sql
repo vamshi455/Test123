@@ -1,4 +1,4 @@
--- Create the Interpolate function with the new schema
+-- Create the Interpolate function (unchanged)
 CREATE OR REPLACE FUNCTION RMDE_SAM_ACC.Interpolate(x FLOAT, x1 FLOAT, x2 FLOAT, y1 FLOAT, y2 FLOAT)
 RETURNS FLOAT
 AS
@@ -10,7 +10,7 @@ $$
     END
 $$;
 
--- Create the Extrapolate function with the new schema
+-- Create the Extrapolate function (unchanged)
 CREATE OR REPLACE FUNCTION RMDE_SAM_ACC.Extrapolate(x FLOAT, x1 FLOAT, x2 FLOAT, y1 FLOAT, y2 FLOAT)
 RETURNS FLOAT
 AS
@@ -21,9 +21,20 @@ $$
     END
 $$;
 
--- Create the main InterpolatePVTCompletionTest function with the new schema
+-- Create the main InterpolatePVTCompletionTest function as a table function
 CREATE OR REPLACE FUNCTION RMDE_SAM_ACC.InterpolatePVTCompletionTest(completion VARCHAR(32), pressure FLOAT, vrr_date DATE)
-RETURNS VARIANT
+RETURNS TABLE (
+    PRESSURE FLOAT,
+    OIL_FORMATION_VOLUME_FACTOR FLOAT,
+    GAS_FORMATION_VOLUME_FACTOR FLOAT,
+    WATER_FORMATION_VOLUME_FACTOR FLOAT,
+    SOLUTION_GAS_OIL_RATIO FLOAT,
+    VISCOSITY_OIL FLOAT,
+    VISCOSITY_WATER FLOAT,
+    VISCOSITY_GAS FLOAT,
+    INJECTED_GAS_FORMATION_VOLUME_FACTOR FLOAT,
+    INJECTED_WATER_FORMATION_VOLUME_FACTOR FLOAT
+)
 AS
 $$
 WITH 
@@ -151,192 +162,202 @@ InterpolatedValues AS (
     SELECT 
         CASE 
             WHEN (SELECT COUNT(*) FROM ExactMatch) = 1 THEN
-                OBJECT_CONSTRUCT(
-                    'PRESSURE', (SELECT PRESSURE FROM ExactMatch),
-                    'OIL_FORMATION_VOLUME_FACTOR', (SELECT OIL_FORMATION_VOLUME_FACTOR FROM ExactMatch),
-                    'GAS_FORMATION_VOLUME_FACTOR', (SELECT GAS_FORMATION_VOLUME_FACTOR FROM ExactMatch),
-                    'WATER_FORMATION_VOLUME_FACTOR', (SELECT WATER_FORMATION_VOLUME_FACTOR FROM ExactMatch),
-                    'SOLUTION_GAS_OIL_RATIO', (SELECT SOLUTION_GAS_OIL_RATIO FROM ExactMatch),
-                    'VISCOSITY_OIL', (SELECT VISCOSITY_OIL FROM ExactMatch),
-                    'VISCOSITY_WATER', (SELECT VISCOSITY_WATER FROM ExactMatch),
-                    'VISCOSITY_GAS', (SELECT VISCOSITY_GAS FROM ExactMatch),
-                    'INJECTED_GAS_FORMATION_VOLUME_FACTOR', (SELECT INJECTED_GAS_FORMATION_VOLUME_FACTOR FROM ExactMatch),
-                    'INJECTED_WATER_FORMATION_VOLUME_FACTOR', (SELECT INJECTED_WATER_FORMATION_VOLUME_FACTOR FROM ExactMatch)
-                )
+                SELECT 
+                    PRESSURE,
+                    OIL_FORMATION_VOLUME_FACTOR,
+                    GAS_FORMATION_VOLUME_FACTOR,
+                    WATER_FORMATION_VOLUME_FACTOR,
+                    SOLUTION_GAS_OIL_RATIO,
+                    VISCOSITY_OIL,
+                    VISCOSITY_WATER,
+                    VISCOSITY_GAS,
+                    INJECTED_GAS_FORMATION_VOLUME_FACTOR,
+                    INJECTED_WATER_FORMATION_VOLUME_FACTOR
+                FROM ExactMatch
             WHEN (SELECT COUNT(*) FROM Lowerbound) = 1 AND (SELECT COUNT(*) FROM Upperbound) = 1 THEN
-                OBJECT_CONSTRUCT(
-                    'PRESSURE', pressure,
-                    'OIL_FORMATION_VOLUME_FACTOR', RMDE_SAM_ACC.Interpolate(
+                SELECT 
+                    pressure AS PRESSURE,
+                    RMDE_SAM_ACC.Interpolate(
                         pressure,
                         (SELECT PRESSURE FROM Lowerbound),
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT OIL_FORMATION_VOLUME_FACTOR FROM Lowerbound),
                         (SELECT OIL_FORMATION_VOLUME_FACTOR FROM Upperbound)
-                    ),
-                    'GAS_FORMATION_VOLUME_FACTOR', RMDE_SAM_ACC.Interpolate(
+                    ) AS OIL_FORMATION_VOLUME_FACTOR,
+                    RMDE_SAM_ACC.Interpolate(
                         pressure,
                         (SELECT PRESSURE FROM Lowerbound),
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT GAS_FORMATION_VOLUME_FACTOR FROM Lowerbound),
                         (SELECT GAS_FORMATION_VOLUME_FACTOR FROM Upperbound)
-                    ),
-                    'WATER_FORMATION_VOLUME_FACTOR', RMDE_SAM_ACC.Interpolate(
+                    ) AS GAS_FORMATION_VOLUME_FACTOR,
+                    RMDE_SAM_ACC.Interpolate(
                         pressure,
                         (SELECT PRESSURE FROM Lowerbound),
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT WATER_FORMATION_VOLUME_FACTOR FROM Lowerbound),
                         (SELECT WATER_FORMATION_VOLUME_FACTOR FROM Upperbound)
-                    ),
-                    'SOLUTION_GAS_OIL_RATIO', RMDE_SAM_ACC.Interpolate(
+                    ) AS WATER_FORMATION_VOLUME_FACTOR,
+                    RMDE_SAM_ACC.Interpolate(
                         pressure,
                         (SELECT PRESSURE FROM Lowerbound),
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT SOLUTION_GAS_OIL_RATIO FROM Lowerbound),
                         (SELECT SOLUTION_GAS_OIL_RATIO FROM Upperbound)
-                    ),
-                    'VISCOSITY_OIL', RMDE_SAM_ACC.Interpolate(
+                    ) AS SOLUTION_GAS_OIL_RATIO,
+                    RMDE_SAM_ACC.Interpolate(
                         pressure,
                         (SELECT PRESSURE FROM Lowerbound),
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT VISCOSITY_OIL FROM Lowerbound),
                         (SELECT VISCOSITY_OIL FROM Upperbound)
-                    ),
-                    'VISCOSITY_WATER', RMDE_SAM_ACC.Interpolate(
+                    ) AS VISCOSITY_OIL,
+                    RMDE_SAM_ACC.Interpolate(
                         pressure,
                         (SELECT PRESSURE FROM Lowerbound),
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT VISCOSITY_WATER FROM Lowerbound),
                         (SELECT VISCOSITY_WATER FROM Upperbound)
-                    ),
-                    'VISCOSITY_GAS', RMDE_SAM_ACC.Interpolate(
+                    ) AS VISCOSITY_WATER,
+                    RMDE_SAM_ACC.Interpolate(
                         pressure,
                         (SELECT PRESSURE FROM Lowerbound),
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT VISCOSITY_GAS FROM Lowerbound),
                         (SELECT VISCOSITY_GAS FROM Upperbound)
-                    ),
-                    'INJECTED_GAS_FORMATION_VOLUME_FACTOR', RMDE_SAM_ACC.Interpolate(
+                    ) AS VISCOSITY_GAS,
+                    RMDE_SAM_ACC.Interpolate(
                         pressure,
                         (SELECT PRESSURE FROM Lowerbound),
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT INJECTED_GAS_FORMATION_VOLUME_FACTOR FROM Lowerbound),
                         (SELECT INJECTED_GAS_FORMATION_VOLUME_FACTOR FROM Upperbound)
-                    ),
-                    'INJECTED_WATER_FORMATION_VOLUME_FACTOR', RMDE_SAM_ACC.Interpolate(
+                    ) AS INJECTED_GAS_FORMATION_VOLUME_FACTOR,
+                    RMDE_SAM_ACC.Interpolate(
                         pressure,
                         (SELECT PRESSURE FROM Lowerbound),
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT INJECTED_WATER_FORMATION_VOLUME_FACTOR FROM Lowerbound),
                         (SELECT INJECTED_WATER_FORMATION_VOLUME_FACTOR FROM Upperbound)
-                    )
-                )
+                    ) AS INJECTED_WATER_FORMATION_VOLUME_FACTOR
             WHEN (SELECT COUNT(*) FROM Lowerbound) = 1 AND (SELECT COUNT(*) FROM SecondBound) = 1 THEN
-                OBJECT_CONSTRUCT(
-                    'PRESSURE', pressure,
-                    'OIL_FORMATION_VOLUME_FACTOR', RMDE_SAM_ACC.Extrapolate(
+                SELECT 
+                    pressure AS PRESSURE,
+                    RMDE_SAM_ACC.Extrapolate(
                         pressure,
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT PRESSURE FROM SecondBound),
                         (SELECT OIL_FORMATION_VOLUME_FACTOR FROM Upperbound),
                         (SELECT OIL_FORMATION_VOLUME_FACTOR FROM SecondBound)
-                    ),
-                    'GAS_FORMATION_VOLUME_FACTOR', RMDE_SAM_ACC.Extrapolate(
+                    ) AS OIL_FORMATION_VOLUME_FACTOR,
+                    RMDE_SAM_ACC.Extrapolate(
                         pressure,
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT PRESSURE FROM SecondBound),
                         (SELECT GAS_FORMATION_VOLUME_FACTOR FROM Upperbound),
                         (SELECT GAS_FORMATION_VOLUME_FACTOR FROM SecondBound)
-                    ),
-                    'WATER_FORMATION_VOLUME_FACTOR', RMDE_SAM_ACC.Extrapolate(
+                    ) AS GAS_FORMATION_VOLUME_FACTOR,
+                    RMDE_SAM_ACC.Extrapolate(
                         pressure,
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT PRESSURE FROM SecondBound),
                         (SELECT WATER_FORMATION_VOLUME_FACTOR FROM Upperbound),
                         (SELECT WATER_FORMATION_VOLUME_FACTOR FROM SecondBound)
-                    ),
-                    'SOLUTION_GAS_OIL_RATIO', RMDE_SAM_ACC.Extrapolate(
+                    ) AS WATER_FORMATION_VOLUME_FACTOR,
+                    RMDE_SAM_ACC.Extrapolate(
                         pressure,
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT PRESSURE FROM SecondBound),
                         (SELECT SOLUTION_GAS_OIL_RATIO FROM Upperbound),
                         (SELECT SOLUTION_GAS_OIL_RATIO FROM SecondBound)
-                    ),
-                    'VISCOSITY_OIL', RMDE_SAM_ACC.Extrapolate(
+                    ) AS SOLUTION_GAS_OIL_RATIO,
+                    RMDE_SAM_ACC.Extrapolate(
                         pressure,
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT PRESSURE FROM SecondBound),
                         (SELECT VISCOSITY_OIL FROM Upperbound),
                         (SELECT VISCOSITY_OIL FROM SecondBound)
-                    ),
-                    'VISCOSITY_WATER', RMDE_SAM_ACC.Extrapolate(
+                    ) AS VISCOSITY_OIL,
+                    RMDE_SAM_ACC.Extrapolate(
                         pressure,
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT PRESSURE FROM SecondBound),
                         (SELECT VISCOSITY_WATER FROM Upperbound),
                         (SELECT VISCOSITY_WATER FROM SecondBound)
-                    ),
-                    'VISCOSITY_GAS', RMDE_SAM_ACC.Extrapolate(
+                    ) AS VISCOSITY_WATER,
+                    RMDE_SAM_ACC.Extrapolate(
                         pressure,
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT PRESSURE FROM SecondBound),
                         (SELECT VISCOSITY_GAS FROM Upperbound),
                         (SELECT VISCOSITY_GAS FROM SecondBound)
-                    ),
-                    'INJECTED_GAS_FORMATION_VOLUME_FACTOR', RMDE_SAM_ACC.Extrapolate(
+                    ) AS VISCOSITY_GAS,
+                    RMDE_SAM_ACC.Extrapolate(
                         pressure,
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT PRESSURE FROM SecondBound),
                         (SELECT INJECTED_GAS_FORMATION_VOLUME_FACTOR FROM Upperbound),
                         (SELECT INJECTED_GAS_FORMATION_VOLUME_FACTOR FROM SecondBound)
-                    ),
-                    'INJECTED_WATER_FORMATION_VOLUME_FACTOR', RMDE_SAM_ACC.Extrapolate(
+                    ) AS INJECTED_GAS_FORMATION_VOLUME_FACTOR,
+                    RMDE_SAM_ACC.Extrapolate(
                         pressure,
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT PRESSURE FROM SecondBound),
                         (SELECT INJECTED_WATER_FORMATION_VOLUME_FACTOR FROM Upperbound),
                         (SELECT INJECTED_WATER_FORMATION_VOLUME_FACTOR FROM SecondBound)
-                    )
-                )
+                    ) AS INJECTED_WATER_FORMATION_VOLUME_FACTOR
             WHEN (SELECT COUNT(*) FROM Upperbound) = 1 THEN
-                OBJECT_CONSTRUCT(
-                    'PRESSURE', (SELECT PRESSURE FROM Upperbound),
-                    'OIL_FORMATION_VOLUME_FACTOR', (SELECT OIL_FORMATION_VOLUME_FACTOR FROM Upperbound),
-                    'GAS_FORMATION_VOLUME_FACTOR', (SELECT GAS_FORMATION_VOLUME_FACTOR FROM Upperbound),
-                    'WATER_FORMATION_VOLUME_FACTOR', (SELECT WATER_FORMATION_VOLUME_FACTOR FROM Upperbound),
-                    'SOLUTION_GAS_OIL_RATIO', (SELECT SOLUTION_GAS_OIL_RATIO FROM Upperbound),
-                    'VISCOSITY_OIL', (SELECT VISCOSITY_OIL FROM Upperbound),
-                    'VISCOSITY_WATER', (SELECT VISCOSITY_WATER FROM Upperbound),
-                    'VISCOSITY_GAS', (SELECT VISCOSITY_GAS FROM Upperbound),
-                    'INJECTED_GAS_FORMATION_VOLUME_FACTOR', (SELECT INJECTED_GAS_FORMATION_VOLUME_FACTOR FROM Upperbound),
-                    'INJECTED_WATER_FORMATION_VOLUME_FACTOR', (SELECT INJECTED_WATER_FORMATION_VOLUME_FACTOR FROM Upperbound)
-                )
+                SELECT 
+                    PRESSURE,
+                    OIL_FORMATION_VOLUME_FACTOR,
+                    GAS_FORMATION_VOLUME_FACTOR,
+                    WATER_FORMATION_VOLUME_FACTOR,
+                    SOLUTION_GAS_OIL_RATIO,
+                    VISCOSITY_OIL,
+                    VISCOSITY_WATER,
+                    VISCOSITY_GAS,
+                    INJECTED_GAS_FORMATION_VOLUME_FACTOR,
+                    INJECTED_WATER_FORMATION_VOLUME_FACTOR
+                FROM Upperbound
             ELSE
-                OBJECT_CONSTRUCT(
-                    'PRESSURE', pressure,
-                    'OIL_FORMATION_VOLUME_FACTOR', NULL,
-                    'GAS_FORMATION_VOLUME_FACTOR', NULL,
-                    'WATER_FORMATION_VOLUME_FACTOR', NULL,
-                    'SOLUTION_GAS_OIL_RATIO', NULL,
-                    'VISCOSITY_OIL', NULL,
-                    'VISCOSITY_WATER', NULL,
-                    'VISCOSITY_GAS', NULL,
-                    'INJECTED_GAS_FORMATION_VOLUME_FACTOR', NULL,
-                    'INJECTED_WATER_FORMATION_VOLUME_FACTOR', NULL
-                )
-        END AS result
+                SELECT 
+                    pressure AS PRESSURE,
+                    NULL AS OIL_FORMATION_VOLUME_FACTOR,
+                    NULL AS GAS_FORMATION_VOLUME_FACTOR,
+                    NULL AS WATER_FORMATION_VOLUME_FACTOR,
+                    NULL AS SOLUTION_GAS_OIL_RATIO,
+                    NULL AS VISCOSITY_OIL,
+                    NULL AS VISCOSITY_WATER,
+                    NULL AS VISCOSITY_GAS,
+                    NULL AS INJECTED_GAS_FORMATION_VOLUME_FACTOR,
+                    NULL AS INJECTED_WATER_FORMATION_VOLUME_FACTOR
+        END
+),
+-- Step 8: Round the results to 5 decimal places
+RoundedValues AS (
+    SELECT 
+        ROUND(PRESSURE, 5) AS PRESSURE,
+        ROUND(OIL_FORMATION_VOLUME_FACTOR, 5) AS OIL_FORMATION_VOLUME_FACTOR,
+        ROUND(GAS_FORMATION_VOLUME_FACTOR, 5) AS GAS_FORMATION_VOLUME_FACTOR,
+        ROUND(WATER_FORMATION_VOLUME_FACTOR, 5) AS WATER_FORMATION_VOLUME_FACTOR,
+        ROUND(SOLUTION_GAS_OIL_RATIO, 5) AS SOLUTION_GAS_OIL_RATIO,
+        ROUND(VISCOSITY_OIL, 5) AS VISCOSITY_OIL,
+        ROUND(VISCOSITY_WATER, 5) AS VISCOSITY_WATER,
+        ROUND(VISCOSITY_GAS, 5) AS VISCOSITY_GAS,
+        ROUND(INJECTED_GAS_FORMATION_VOLUME_FACTOR, 5) AS INJECTED_GAS_FORMATION_VOLUME_FACTOR,
+        ROUND(INJECTED_WATER_FORMATION_VOLUME_FACTOR, 5) AS INJECTED_WATER_FORMATION_VOLUME_FACTOR
+    FROM InterpolatedValues
 )
 SELECT 
-    OBJECT_CONSTRUCT(
-        'PRESSURE', ROUND(result:PRESSURE::FLOAT, 5),
-        'OIL_FORMATION_VOLUME_FACTOR', ROUND(result:OIL_FORMATION_VOLUME_FACTOR::FLOAT, 5),
-        'GAS_FORMATION_VOLUME_FACTOR', ROUND(result:GAS_FORMATION_VOLUME_FACTOR::FLOAT, 5),
-        'WATER_FORMATION_VOLUME_FACTOR', ROUND(result:WATER_FORMATION_VOLUME_FACTOR::FLOAT, 5),
-        'SOLUTION_GAS_OIL_RATIO', ROUND(result:SOLUTION_GAS_OIL_RATIO::FLOAT, 5),
-        'VISCOSITY_OIL', ROUND(result:VISCOSITY_OIL::FLOAT, 5),
-        'VISCOSITY_WATER', ROUND(result:VISCOSITY_WATER::FLOAT, 5),
-        'VISCOSITY_GAS', ROUND(result:VISCOSITY_GAS::FLOAT, 5),
-        'INJECTED_GAS_FORMATION_VOLUME_FACTOR', ROUND(result:INJECTED_GAS_FORMATION_VOLUME_FACTOR::FLOAT, 5),
-        'INJECTED_WATER_FORMATION_VOLUME_FACTOR', ROUND(result:INJECTED_WATER_FORMATION_VOLUME_FACTOR::FLOAT, 5)
-    ) AS rounded_result
-FROM InterpolatedValues;
+    PRESSURE,
+    OIL_FORMATION_VOLUME_FACTOR,
+    GAS_FORMATION_VOLUME_FACTOR,
+    WATER_FORMATION_VOLUME_FACTOR,
+    SOLUTION_GAS_OIL_RATIO,
+    VISCOSITY_OIL,
+    VISCOSITY_WATER,
+    VISCOSITY_GAS,
+    INJECTED_GAS_FORMATION_VOLUME_FACTOR,
+    INJECTED_WATER_FORMATION_VOLUME_FACTOR
+FROM RoundedValues;
 $$;
