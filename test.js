@@ -74,14 +74,11 @@ $$
         const pvtWithEndDate = [];
         for (let i = 0; i < basePVTData.length; i++) {
             const record = basePVTData[i];
-            // Compute NEXT_TEST_DATE (equivalent to LEAD)
             let nextTestDate = null;
             if (i < basePVTData.length - 1 && basePVTData[i + 1].ID_COMPLETION === record.ID_COMPLETION) {
                 nextTestDate = basePVTData[i + 1].TEST_DATE;
             }
             const endDate = nextTestDate || '9999-12-31';
-
-            // Apply the LAST_DAY(vrr_date, 'MONTH') < END_DATE filter
             if (new Date(lastDay) < new Date(endDate)) {
                 pvtWithEndDate.push({
                     ...record,
@@ -90,19 +87,19 @@ $$
             }
         }
 
-        // Step 4: Sort pvtWithEndDate by TEST_DATE DESC to ensure correct ordering for exact match
+        // Step 4: Sort pvtWithEndDate by TEST_DATE DESC for exact match
         pvtWithEndDate.sort((a, b) => new Date(b.TEST_DATE) - new Date(a.TEST_DATE));
 
-        // Step 5: Find ExactMatch (most recent record where PRESSURE matches)
+        // Step 5: Find ExactMatch
         let exactMatch = null;
         for (const record of pvtWithEndDate) {
             if (record.PRESSURE === pressure && record.ID_COMPLETION === completion && new Date(record.TEST_DATE) <= new Date(lastDay)) {
                 exactMatch = record;
-                break; // Take the most recent (first match after sorting by TEST_DATE DESC)
+                break;
             }
         }
 
-        // Step 6: Create a copy of pvtWithEndDate and sort by PRESSURE to find the closest bounds
+        // Step 6: Sort by PRESSURE to find bounds
         const pvtSortedByPressure = [...pvtWithEndDate].sort((a, b) => a.PRESSURE - b.PRESSURE);
 
         // Step 7: Find Lowerbound (closest record where PRESSURE < pressure)
@@ -131,22 +128,45 @@ $$
             }
         }
 
-        // Step 9: Find SecondBound (closest record where PRESSURE < upperbound.PRESSURE)
-        let secondBound = null;
-        let secondBoundDiff = Infinity;
-        if (upperbound) {
-            for (const record of pvtSortedByPressure) {
-                if (record.PRESSURE < upperbound.PRESSURE && record.ID_COMPLETION === completion && new Date(record.TEST_DATE) <= new Date(lastDay)) {
-                    const diff = upperbound.PRESSURE - record.PRESSURE;
-                    if (diff < secondBoundDiff) {
-                        secondBound = record;
-                        secondBoundDiff = diff;
-                    }
+        // Step 9: Find the two lowest pressures for extrapolation below the range
+        let lowestBound = null;
+        let secondLowestBound = null;
+        let lowestPressure = Infinity;
+        let secondLowestPressure = Infinity;
+        for (const record of pvtSortedByPressure) {
+            if (record.ID_COMPLETION === completion && new Date(record.TEST_DATE) <= new Date(lastDay)) {
+                if (record.PRESSURE < lowestPressure) {
+                    secondLowestBound = lowestBound;
+                    secondLowestPressure = lowestPressure;
+                    lowestBound = record;
+                    lowestPressure = record.PRESSURE;
+                } else if (record.PRESSURE < secondLowestPressure && record.PRESSURE > lowestPressure) {
+                    secondLowestBound = record;
+                    secondLowestPressure = record.PRESSURE;
                 }
             }
         }
 
-        // Step 10: Compute the interpolated or extrapolated values
+        // Step 10: Find the two highest pressures for extrapolation above the range
+        let highestBound = null;
+        let secondHighestBound = null;
+        let highestPressure = -Infinity;
+        let secondHighestPressure = -Infinity;
+        for (const record of pvtSortedByPressure) {
+            if (record.ID_COMPLETION === completion && new Date(record.TEST_DATE) <= new Date(lastDay)) {
+                if (record.PRESSURE > highestPressure) {
+                    secondHighestBound = highestBound;
+                    secondHighestPressure = highestPressure;
+                    highestBound = record;
+                    highestPressure = record.PRESSURE;
+                } else if (record.PRESSURE > secondHighestPressure && record.PRESSURE < highestPressure) {
+                    secondHighestBound = record;
+                    secondHighestPressure = record.PRESSURE;
+                }
+            }
+        }
+
+        // Step 11: Compute the interpolated or extrapolated values
         let result = {};
         if (exactMatch) {
             result = {
@@ -199,7 +219,8 @@ $$
                 INJECTED_GAS_FORMATION_VOLUME_FACTOR: interpolateResult.getColumnValue("INJECTED_GAS_FORMATION_VOLUME_FACTOR"),
                 INJECTED_WATER_FORMATION_VOLUME_FACTOR: interpolateResult.getColumnValue("INJECTED_WATER_FORMATION_VOLUME_FACTOR")
             };
-        } else if (lowerbound && secondBound && upperbound) {
+        } else if (pressure < lowestPressure && lowestBound && secondLowestBound) {
+            // Extrapolate below the range using the two lowest pressures
             const extrapolateQuery = `
                 SELECT 
                     RMDE_SAM_ACC.Extrapolate(?, ?, ?, ?, ?) AS OIL_FORMATION_VOLUME_FACTOR,
@@ -214,15 +235,15 @@ $$
             `;
             const extrapolateStmt = context.prepare(extrapolateQuery);
             extrapolateStmt.execute({ binds: [
-                pressure, upperbound.PRESSURE, secondBound.PRESSURE, upperbound.OIL_FORMATION_VOLUME_FACTOR, secondBound.OIL_FORMATION_VOLUME_FACTOR,
-                pressure, upperbound.PRESSURE, secondBound.PRESSURE, upperbound.GAS_FORMATION_VOLUME_FACTOR, secondBound.GAS_FORMATION_VOLUME_FACTOR,
-                pressure, upperbound.PRESSURE, secondBound.PRESSURE, upperbound.WATER_FORMATION_VOLUME_FACTOR, secondBound.WATER_FORMATION_VOLUME_FACTOR,
-                pressure, upperbound.PRESSURE, secondBound.PRESSURE, upperbound.SOLUTION_GAS_OIL_RATIO, secondBound.SOLUTION_GAS_OIL_RATIO,
-                pressure, upperbound.PRESSURE, secondBound.PRESSURE, upperbound.VISCOSITY_OIL, secondBound.VISCOSITY_OIL,
-                pressure, upperbound.PRESSURE, secondBound.PRESSURE, upperbound.VISCOSITY_WATER, secondBound.VISCOSITY_WATER,
-                pressure, upperbound.PRESSURE, secondBound.PRESSURE, upperbound.VISCOSITY_GAS, secondBound.VISCOSITY_GAS,
-                pressure, upperbound.PRESSURE, secondBound.PRESSURE, upperbound.INJECTED_GAS_FORMATION_VOLUME_FACTOR, secondBound.INJECTED_GAS_FORMATION_VOLUME_FACTOR,
-                pressure, upperbound.PRESSURE, secondBound.PRESSURE, upperbound.INJECTED_WATER_FORMATION_VOLUME_FACTOR, secondBound.INJECTED_WATER_FORMATION_VOLUME_FACTOR
+                pressure, lowestBound.PRESSURE, secondLowestBound.PRESSURE, lowestBound.OIL_FORMATION_VOLUME_FACTOR, secondLowestBound.OIL_FORMATION_VOLUME_FACTOR,
+                pressure, lowestBound.PRESSURE, secondLowestBound.PRESSURE, lowestBound.GAS_FORMATION_VOLUME_FACTOR, secondLowestBound.GAS_FORMATION_VOLUME_FACTOR,
+                pressure, lowestBound.PRESSURE, secondLowestBound.PRESSURE, lowestBound.WATER_FORMATION_VOLUME_FACTOR, secondLowestBound.WATER_FORMATION_VOLUME_FACTOR,
+                pressure, lowestBound.PRESSURE, secondLowestBound.PRESSURE, lowestBound.SOLUTION_GAS_OIL_RATIO, secondLowestBound.SOLUTION_GAS_OIL_RATIO,
+                pressure, lowestBound.PRESSURE, secondLowestBound.PRESSURE, lowestBound.VISCOSITY_OIL, secondLowestBound.VISCOSITY_OIL,
+                pressure, lowestBound.PRESSURE, secondLowestBound.PRESSURE, lowestBound.VISCOSITY_WATER, secondLowestBound.VISCOSITY_WATER,
+                pressure, lowestBound.PRESSURE, secondLowestBound.PRESSURE, lowestBound.VISCOSITY_GAS, secondLowestBound.VISCOSITY_GAS,
+                pressure, lowestBound.PRESSURE, secondLowestBound.PRESSURE, lowestBound.INJECTED_GAS_FORMATION_VOLUME_FACTOR, secondLowestBound.INJECTED_GAS_FORMATION_VOLUME_FACTOR,
+                pressure, lowestBound.PRESSURE, secondLowestBound.PRESSURE, lowestBound.INJECTED_WATER_FORMATION_VOLUME_FACTOR, secondLowestBound.INJECTED_WATER_FORMATION_VOLUME_FACTOR
             ]});
             const extrapolateResult = extrapolateStmt.fetch();
             result = {
@@ -237,20 +258,47 @@ $$
                 INJECTED_GAS_FORMATION_VOLUME_FACTOR: extrapolateResult.getColumnValue("INJECTED_GAS_FORMATION_VOLUME_FACTOR"),
                 INJECTED_WATER_FORMATION_VOLUME_FACTOR: extrapolateResult.getColumnValue("INJECTED_WATER_FORMATION_VOLUME_FACTOR")
             };
-        } else if (upperbound) {
+        } else if (pressure > highestPressure && highestBound && secondHighestBound) {
+            // Extrapolate above the range using the two highest pressures
+            const extrapolateQuery = `
+                SELECT 
+                    RMDE_SAM_ACC.Extrapolate(?, ?, ?, ?, ?) AS OIL_FORMATION_VOLUME_FACTOR,
+                    RMDE_SAM_ACC.Extrapolate(?, ?, ?, ?, ?) AS GAS_FORMATION_VOLUME_FACTOR,
+                    RMDE_SAM_ACC.Extrapolate(?, ?, ?, ?, ?) AS WATER_FORMATION_VOLUME_FACTOR,
+                    RMDE_SAM_ACC.Extrapolate(?, ?, ?, ?, ?) AS SOLUTION_GAS_OIL_RATIO,
+                    RMDE_SAM_ACC.Extrapolate(?, ?, ?, ?, ?) AS VISCOSITY_OIL,
+                    RMDE_SAM_ACC.Extrapolate(?, ?, ?, ?, ?) AS VISCOSITY_WATER,
+                    RMDE_SAM_ACC.Extrapolate(?, ?, ?, ?, ?) AS VISCOSITY_GAS,
+                    RMDE_SAM_ACC.Extrapolate(?, ?, ?, ?, ?) AS INJECTED_GAS_FORMATION_VOLUME_FACTOR,
+                    RMDE_SAM_ACC.Extrapolate(?, ?, ?, ?, ?) AS INJECTED_WATER_FORMATION_VOLUME_FACTOR
+            `;
+            const extrapolateStmt = context.prepare(extrapolateQuery);
+            extrapolateStmt.execute({ binds: [
+                pressure, highestBound.PRESSURE, secondHighestBound.PRESSURE, highestBound.OIL_FORMATION_VOLUME_FACTOR, secondHighestBound.OIL_FORMATION_VOLUME_FACTOR,
+                pressure, highestBound.PRESSURE, secondHighestBound.PRESSURE, highestBound.GAS_FORMATION_VOLUME_FACTOR, secondHighestBound.GAS_FORMATION_VOLUME_FACTOR,
+                pressure, highestBound.PRESSURE, secondHighestBound.PRESSURE, highestBound.WATER_FORMATION_VOLUME_FACTOR, secondHighestBound.WATER_FORMATION_VOLUME_FACTOR,
+                pressure, highestBound.PRESSURE, secondHighestBound.PRESSURE, highestBound.SOLUTION_GAS_OIL_RATIO, secondHighestBound.SOLUTION_GAS_OIL_RATIO,
+                pressure, highestBound.PRESSURE, secondHighestBound.PRESSURE, highestBound.VISCOSITY_OIL, secondHighestBound.VISCOSITY_OIL,
+                pressure, highestBound.PRESSURE, secondHighestBound.PRESSURE, highestBound.VISCOSITY_WATER, secondHighestBound.VISCOSITY_WATER,
+                pressure, highestBound.PRESSURE, secondHighestBound.PRESSURE, highestBound.VISCOSITY_GAS, secondHighestBound.VISCOSITY_GAS,
+                pressure, highestBound.PRESSURE, secondHighestBound.PRESSURE, highestBound.INJECTED_GAS_FORMATION_VOLUME_FACTOR, secondHighestBound.INJECTED_GAS_FORMATION_VOLUME_FACTOR,
+                pressure, highestBound.PRESSURE, secondHighestBound.PRESSURE, highestBound.INJECTED_WATER_FORMATION_VOLUME_FACTOR, secondHighestBound.INJECTED_WATER_FORMATION_VOLUME_FACTOR
+            ]});
+            const extrapolateResult = extrapolateStmt.fetch();
             result = {
-                PRESSURE: upperbound.PRESSURE,
-                OIL_FORMATION_VOLUME_FACTOR: upperbound.OIL_FORMATION_VOLUME_FACTOR,
-                GAS_FORMATION_VOLUME_FACTOR: upperbound.GAS_FORMATION_VOLUME_FACTOR,
-                WATER_FORMATION_VOLUME_FACTOR: upperbound.WATER_FORMATION_VOLUME_FACTOR,
-                SOLUTION_GAS_OIL_RATIO: upperbound.SOLUTION_GAS_OIL_RATIO,
-                VISCOSITY_OIL: upperbound.VISCOSITY_OIL,
-                VISCOSITY_WATER: upperbound.VISCOSITY_WATER,
-                VISCOSITY_GAS: upperbound.VISCOSITY_GAS,
-                INJECTED_GAS_FORMATION_VOLUME_FACTOR: upperbound.INJECTED_GAS_FORMATION_VOLUME_FACTOR,
-                INJECTED_WATER_FORMATION_VOLUME_FACTOR: upperbound.INJECTED_WATER_FORMATION_VOLUME_FACTOR
+                PRESSURE: pressure,
+                OIL_FORMATION_VOLUME_FACTOR: extrapolateResult.getColumnValue("OIL_FORMATION_VOLUME_FACTOR"),
+                GAS_FORMATION_VOLUME_FACTOR: extrapolateResult.getColumnValue("GAS_FORMATION_VOLUME_FACTOR"),
+                WATER_FORMATION_VOLUME_FACTOR: extrapolateResult.getColumnValue("WATER_FORMATION_VOLUME_FACTOR"),
+                SOLUTION_GAS_OIL_RATIO: extrapolateResult.getColumnValue("SOLUTION_GAS_OIL_RATIO"),
+                VISCOSITY_OIL: extrapolateResult.getColumnValue("VISCOSITY_OIL"),
+                VISCOSITY_WATER: extrapolateResult.getColumnValue("VISCOSITY_WATER"),
+                VISCOSITY_GAS: extrapolateResult.getColumnValue("VISCOSITY_GAS"),
+                INJECTED_GAS_FORMATION_VOLUME_FACTOR: extrapolateResult.getColumnValue("INJECTED_GAS_FORMATION_VOLUME_FACTOR"),
+                INJECTED_WATER_FORMATION_VOLUME_FACTOR: extrapolateResult.getColumnValue("INJECTED_WATER_FORMATION_VOLUME_FACTOR")
             };
         } else {
+            // If no extrapolation or interpolation is possible, return nulls
             result = {
                 PRESSURE: pressure,
                 OIL_FORMATION_VOLUME_FACTOR: null,
@@ -265,7 +313,7 @@ $$
             };
         }
 
-        // Step 11: Round the results to 5 decimal places
+        // Step 12: Round the results to 5 decimal places
         const roundedResult = {
             PRESSURE: Math.round(result.PRESSURE * 100000) / 100000,
             OIL_FORMATION_VOLUME_FACTOR: result.OIL_FORMATION_VOLUME_FACTOR ? Math.round(result.OIL_FORMATION_VOLUME_FACTOR * 100000) / 100000 : null,
@@ -279,7 +327,7 @@ $$
             INJECTED_WATER_FORMATION_VOLUME_FACTOR: result.INJECTED_WATER_FORMATION_VOLUME_FACTOR ? Math.round(result.INJECTED_WATER_FORMATION_VOLUME_FACTOR * 100000) / 100000 : null
         };
 
-        // Step 12: Write the result to the output table
+        // Step 13: Write the result to the output table
         rowWriter.writeRow(roundedResult);
     }
 }
