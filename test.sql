@@ -1,5 +1,5 @@
--- Create the Interpolate function
-CREATE OR REPLACE FUNCTION vrr.Interpolate(x FLOAT, x1 FLOAT, x2 FLOAT, y1 FLOAT, y2 FLOAT)
+-- Create the Interpolate function with the new schema
+CREATE OR REPLACE FUNCTION RMDE_SAM_ACC.Interpolate(x FLOAT, x1 FLOAT, x2 FLOAT, y1 FLOAT, y2 FLOAT)
 RETURNS FLOAT
 AS
 $$
@@ -10,8 +10,8 @@ $$
     END
 $$;
 
--- Create the Extrapolate function
-CREATE OR REPLACE FUNCTION vrr.Extrapolate(x FLOAT, x1 FLOAT, x2 FLOAT, y1 FLOAT, y2 FLOAT)
+-- Create the Extrapolate function with the new schema
+CREATE OR REPLACE FUNCTION RMDE_SAM_ACC.Extrapolate(x FLOAT, x1 FLOAT, x2 FLOAT, y1 FLOAT, y2 FLOAT)
 RETURNS FLOAT
 AS
 $$
@@ -21,13 +21,14 @@ $$
     END
 $$;
 
--- Create the main InterpolatePVTCompletionTest function
-CREATE OR REPLACE FUNCTION vrr.InterpolatePVTCompletionTest(completion VARCHAR(32), pressure FLOAT, vrr_date DATE)
+-- Create the main InterpolatePVTCompletionTest function with the new schema
+CREATE OR REPLACE FUNCTION RMDE_SAM_ACC.InterpolatePVTCompletionTest(completion VARCHAR(32), pressure FLOAT, vrr_date DATE)
 RETURNS VARIANT
 AS
 $$
 WITH 
-PVTwithEndDate AS (
+-- Step 1: Select base data from COMPLETION_PVT_CHARACTERISTICS with the new schema
+BasePVTData AS (
     SELECT 
         ID_COMPLETION,
         TEST_DATE,
@@ -40,19 +41,32 @@ PVTwithEndDate AS (
         VISCOSITY_WATER,
         VISCOSITY_GAS,
         INJECTED_GAS_FORMATION_VOLUME_FACTOR,
-        INJECTED_WATER_FORMATION_VOLUME_FACTOR,
-        COALESCE(
-            (SELECT MIN(test_date)
-             FROM vrr.COMPLETION_PVT_CHARACTERISTICS cpt
-             WHERE cpt.TEST_DATE > vrr.COMPLETION_PVT_CHARACTERISTICS.TEST_DATE 
-               AND cpt.ID_COMPLETION = vrr.COMPLETION_PVT_CHARACTERISTICS.ID_COMPLETION),
-            '9999-12-31'::DATE
-        ) AS END_DATE
-    FROM vrr.COMPLETION_PVT_CHARACTERISTICS
+        INJECTED_WATER_FORMATION_VOLUME_FACTOR
+    FROM RMDE_SAM_ACC.COMPLETION_PVT_CHARACTERISTICS
     WHERE ID_COMPLETION = completion 
       AND TEST_DATE <= LAST_DAY(vrr_date, 'MONTH')
-      AND LAST_DAY(vrr_date, 'MONTH') < END_DATE
 ),
+-- Step 2: Compute END_DATE for each record
+PVTwithEndDate AS (
+    SELECT 
+        b.*,
+        COALESCE(
+            (SELECT MIN(test_date)
+             FROM RMDE_SAM_ACC.COMPLETION_PVT_CHARACTERISTICS cpt
+             WHERE cpt.TEST_DATE > b.TEST_DATE 
+               AND cpt.ID_COMPLETION = b.ID_COMPLETION),
+            '9999-12-31'::DATE
+        ) AS END_DATE
+    FROM BasePVTData b
+    WHERE LAST_DAY(vrr_date, 'MONTH') < COALESCE(
+        (SELECT MIN(test_date)
+         FROM RMDE_SAM_ACC.COMPLETION_PVT_CHARACTERISTICS cpt
+         WHERE cpt.TEST_DATE > b.TEST_DATE 
+           AND cpt.ID_COMPLETION = b.ID_COMPLETION),
+        '9999-12-31'::DATE
+    )
+),
+-- Step 3: Find an exact match (equivalent to @ExactMatch)
 ExactMatch AS (
     SELECT 
         PRESSURE,
@@ -72,6 +86,7 @@ ExactMatch AS (
     ORDER BY TEST_DATE DESC
     LIMIT 1
 ),
+-- Step 4: Find the lower bound (equivalent to @Lowerbound)
 Lowerbound AS (
     SELECT 
         PRESSURE,
@@ -91,6 +106,7 @@ Lowerbound AS (
     ORDER BY TEST_DATE DESC
     LIMIT 1
 ),
+-- Step 5: Find the upper bound (equivalent to @Upperbound)
 Upperbound AS (
     SELECT 
         PRESSURE,
@@ -110,6 +126,7 @@ Upperbound AS (
     ORDER BY TEST_DATE DESC
     LIMIT 1
 ),
+-- Step 6: Find the second bound for extrapolation (equivalent to @SecondBound)
 SecondBound AS (
     SELECT 
         PRESSURE,
@@ -129,6 +146,7 @@ SecondBound AS (
     ORDER BY TEST_DATE DESC
     LIMIT 1
 ),
+-- Step 7: Compute the interpolated or extrapolated values
 InterpolatedValues AS (
     SELECT 
         CASE 
@@ -148,63 +166,63 @@ InterpolatedValues AS (
             WHEN (SELECT COUNT(*) FROM Lowerbound) = 1 AND (SELECT COUNT(*) FROM Upperbound) = 1 THEN
                 OBJECT_CONSTRUCT(
                     'PRESSURE', pressure,
-                    'OIL_FORMATION_VOLUME_FACTOR', vrr.Interpolate(
+                    'OIL_FORMATION_VOLUME_FACTOR', RMDE_SAM_ACC.Interpolate(
                         pressure,
                         (SELECT PRESSURE FROM Lowerbound),
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT OIL_FORMATION_VOLUME_FACTOR FROM Lowerbound),
                         (SELECT OIL_FORMATION_VOLUME_FACTOR FROM Upperbound)
                     ),
-                    'GAS_FORMATION_VOLUME_FACTOR', vrr.Interpolate(
+                    'GAS_FORMATION_VOLUME_FACTOR', RMDE_SAM_ACC.Interpolate(
                         pressure,
                         (SELECT PRESSURE FROM Lowerbound),
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT GAS_FORMATION_VOLUME_FACTOR FROM Lowerbound),
                         (SELECT GAS_FORMATION_VOLUME_FACTOR FROM Upperbound)
                     ),
-                    'WATER_FORMATION_VOLUME_FACTOR', vrr.Interpolate(
+                    'WATER_FORMATION_VOLUME_FACTOR', RMDE_SAM_ACC.Interpolate(
                         pressure,
                         (SELECT PRESSURE FROM Lowerbound),
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT WATER_FORMATION_VOLUME_FACTOR FROM Lowerbound),
                         (SELECT WATER_FORMATION_VOLUME_FACTOR FROM Upperbound)
                     ),
-                    'SOLUTION_GAS_OIL_RATIO', vrr.Interpolate(
+                    'SOLUTION_GAS_OIL_RATIO', RMDE_SAM_ACC.Interpolate(
                         pressure,
                         (SELECT PRESSURE FROM Lowerbound),
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT SOLUTION_GAS_OIL_RATIO FROM Lowerbound),
                         (SELECT SOLUTION_GAS_OIL_RATIO FROM Upperbound)
                     ),
-                    'VISCOSITY_OIL', vrr.Interpolate(
+                    'VISCOSITY_OIL', RMDE_SAM_ACC.Interpolate(
                         pressure,
                         (SELECT PRESSURE FROM Lowerbound),
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT VISCOSITY_OIL FROM Lowerbound),
                         (SELECT VISCOSITY_OIL FROM Upperbound)
                     ),
-                    'VISCOSITY_WATER', vrr.Interpolate(
+                    'VISCOSITY_WATER', RMDE_SAM_ACC.Interpolate(
                         pressure,
                         (SELECT PRESSURE FROM Lowerbound),
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT VISCOSITY_WATER FROM Lowerbound),
                         (SELECT VISCOSITY_WATER FROM Upperbound)
                     ),
-                    'VISCOSITY_GAS', vrr.Interpolate(
+                    'VISCOSITY_GAS', RMDE_SAM_ACC.Interpolate(
                         pressure,
                         (SELECT PRESSURE FROM Lowerbound),
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT VISCOSITY_GAS FROM Lowerbound),
                         (SELECT VISCOSITY_GAS FROM Upperbound)
                     ),
-                    'INJECTED_GAS_FORMATION_VOLUME_FACTOR', vrr.Interpolate(
+                    'INJECTED_GAS_FORMATION_VOLUME_FACTOR', RMDE_SAM_ACC.Interpolate(
                         pressure,
                         (SELECT PRESSURE FROM Lowerbound),
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT INJECTED_GAS_FORMATION_VOLUME_FACTOR FROM Lowerbound),
                         (SELECT INJECTED_GAS_FORMATION_VOLUME_FACTOR FROM Upperbound)
                     ),
-                    'INJECTED_WATER_FORMATION_VOLUME_FACTOR', vrr.Interpolate(
+                    'INJECTED_WATER_FORMATION_VOLUME_FACTOR', RMDE_SAM_ACC.Interpolate(
                         pressure,
                         (SELECT PRESSURE FROM Lowerbound),
                         (SELECT PRESSURE FROM Upperbound),
@@ -215,63 +233,63 @@ InterpolatedValues AS (
             WHEN (SELECT COUNT(*) FROM Lowerbound) = 1 AND (SELECT COUNT(*) FROM SecondBound) = 1 THEN
                 OBJECT_CONSTRUCT(
                     'PRESSURE', pressure,
-                    'OIL_FORMATION_VOLUME_FACTOR', vrr.Extrapolate(
+                    'OIL_FORMATION_VOLUME_FACTOR', RMDE_SAM_ACC.Extrapolate(
                         pressure,
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT PRESSURE FROM SecondBound),
                         (SELECT OIL_FORMATION_VOLUME_FACTOR FROM Upperbound),
                         (SELECT OIL_FORMATION_VOLUME_FACTOR FROM SecondBound)
                     ),
-                    'GAS_FORMATION_VOLUME_FACTOR', vrr.Extrapolate(
+                    'GAS_FORMATION_VOLUME_FACTOR', RMDE_SAM_ACC.Extrapolate(
                         pressure,
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT PRESSURE FROM SecondBound),
                         (SELECT GAS_FORMATION_VOLUME_FACTOR FROM Upperbound),
                         (SELECT GAS_FORMATION_VOLUME_FACTOR FROM SecondBound)
                     ),
-                    'WATER_FORMATION_VOLUME_FACTOR', vrr.Extrapolate(
+                    'WATER_FORMATION_VOLUME_FACTOR', RMDE_SAM_ACC.Extrapolate(
                         pressure,
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT PRESSURE FROM SecondBound),
                         (SELECT WATER_FORMATION_VOLUME_FACTOR FROM Upperbound),
                         (SELECT WATER_FORMATION_VOLUME_FACTOR FROM SecondBound)
                     ),
-                    'SOLUTION_GAS_OIL_RATIO', vrr.Extrapolate(
+                    'SOLUTION_GAS_OIL_RATIO', RMDE_SAM_ACC.Extrapolate(
                         pressure,
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT PRESSURE FROM SecondBound),
                         (SELECT SOLUTION_GAS_OIL_RATIO FROM Upperbound),
                         (SELECT SOLUTION_GAS_OIL_RATIO FROM SecondBound)
                     ),
-                    'VISCOSITY_OIL', vrr.Extrapolate(
+                    'VISCOSITY_OIL', RMDE_SAM_ACC.Extrapolate(
                         pressure,
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT PRESSURE FROM SecondBound),
                         (SELECT VISCOSITY_OIL FROM Upperbound),
                         (SELECT VISCOSITY_OIL FROM SecondBound)
                     ),
-                    'VISCOSITY_WATER', vrr.Extrapolate(
+                    'VISCOSITY_WATER', RMDE_SAM_ACC.Extrapolate(
                         pressure,
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT PRESSURE FROM SecondBound),
                         (SELECT VISCOSITY_WATER FROM Upperbound),
                         (SELECT VISCOSITY_WATER FROM SecondBound)
                     ),
-                    'VISCOSITY_GAS', vrr.Extrapolate(
+                    'VISCOSITY_GAS', RMDE_SAM_ACC.Extrapolate(
                         pressure,
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT PRESSURE FROM SecondBound),
                         (SELECT VISCOSITY_GAS FROM Upperbound),
                         (SELECT VISCOSITY_GAS FROM SecondBound)
                     ),
-                    'INJECTED_GAS_FORMATION_VOLUME_FACTOR', vrr.Extrapolate(
+                    'INJECTED_GAS_FORMATION_VOLUME_FACTOR', RMDE_SAM_ACC.Extrapolate(
                         pressure,
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT PRESSURE FROM SecondBound),
                         (SELECT INJECTED_GAS_FORMATION_VOLUME_FACTOR FROM Upperbound),
                         (SELECT INJECTED_GAS_FORMATION_VOLUME_FACTOR FROM SecondBound)
                     ),
-                    'INJECTED_WATER_FORMATION_VOLUME_FACTOR', vrr.Extrapolate(
+                    'INJECTED_WATER_FORMATION_VOLUME_FACTOR', RMDE_SAM_ACC.Extrapolate(
                         pressure,
                         (SELECT PRESSURE FROM Upperbound),
                         (SELECT PRESSURE FROM SecondBound),
