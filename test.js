@@ -1,4 +1,4 @@
--- Create the Interpolate function (unchanged)
+-- Create the Interpolate function with overflow handling
 CREATE OR REPLACE FUNCTION RMDE_SAM_ACC.Interpolate(x FLOAT, x1 FLOAT, x2 FLOAT, y1 FLOAT, y2 FLOAT)
 RETURNS FLOAT
 AS
@@ -6,17 +6,19 @@ $$
     CASE 
         WHEN x1 = x2 THEN NULL
         WHEN x < x1 OR x > x2 THEN NULL
+        WHEN ABS(y1) > 1E15 OR ABS(y2) > 1E15 THEN NULL -- Prevent overflow
         ELSE y1 + (x - x1) * (y2 - y1) / (x2 - x1)
     END
 $$;
 
--- Create the Extrapolate function (unchanged)
+-- Create the Extrapolate function with overflow handling
 CREATE OR REPLACE FUNCTION RMDE_SAM_ACC.Extrapolate(x FLOAT, x1 FLOAT, x2 FLOAT, y1 FLOAT, y2 FLOAT)
 RETURNS FLOAT
 AS
 $$
     CASE 
         WHEN x1 = x2 THEN NULL
+        WHEN ABS(y1) > 1E15 OR ABS(y2) > 1E15 THEN NULL -- Prevent overflow
         ELSE y2 + (x - x2) * (y1 - y2) / (x1 - x2)
     END
 $$;
@@ -59,19 +61,20 @@ $$
             SELECT 
                 ID_COMPLETION,
                 TEST_DATE,
-                PRESSURE,
-                OIL_FORMATION_VOLUME_FACTOR,
-                GAS_FORMATION_VOLUME_FACTOR,
-                WATER_FORMATION_VOLUME_FACTOR,
-                SOLUTION_GAS_OIL_RATIO,
-                VISCOSITY_OIL,
-                VISCOSITY_WATER,
-                VISCOSITY_GAS,
-                INJECTED_GAS_FORMATION_VOLUME_FACTOR,
-                INJECTED_WATER_FORMATION_VOLUME_FACTOR
+                CAST(PRESSURE AS FLOAT) AS PRESSURE,
+                CAST(OIL_FORMATION_VOLUME_FACTOR AS FLOAT) AS OIL_FORMATION_VOLUME_FACTOR,
+                CAST(GAS_FORMATION_VOLUME_FACTOR AS FLOAT) AS GAS_FORMATION_VOLUME_FACTOR,
+                CAST(WATER_FORMATION_VOLUME_FACTOR AS FLOAT) AS WATER_FORMATION_VOLUME_FACTOR,
+                CAST(SOLUTION_GAS_OIL_RATIO AS FLOAT) AS SOLUTION_GAS_OIL_RATIO,
+                CAST(VISCOSITY_OIL AS FLOAT) AS VISCOSITY_OIL,
+                CAST(VISCOSITY_WATER AS FLOAT) AS VISCOSITY_WATER,
+                CAST(VISCOSITY_GAS AS FLOAT) AS VISCOSITY_GAS,
+                CAST(INJECTED_GAS_FORMATION_VOLUME_FACTOR AS FLOAT) AS INJECTED_GAS_FORMATION_VOLUME_FACTOR,
+                CAST(INJECTED_WATER_FORMATION_VOLUME_FACTOR AS FLOAT) AS INJECTED_WATER_FORMATION_VOLUME_FACTOR
             FROM RMDE_SAM_ACC.COMPLETION_PVT_CHARACTERISTICS
             WHERE ID_COMPLETION = ?
               AND TEST_DATE <= ?
+            ORDER BY TEST_DATE DESC
         `;
         const basePVTStmt = context.prepare(basePVTQuery);
         basePVTStmt.execute({ binds: [completion, lastDay] });
@@ -204,7 +207,7 @@ $$
                 INJECTED_GAS_FORMATION_VOLUME_FACTOR: interpolateResult.getColumnValue("INJECTED_GAS_FORMATION_VOLUME_FACTOR"),
                 INJECTED_WATER_FORMATION_VOLUME_FACTOR: interpolateResult.getColumnValue("INJECTED_WATER_FORMATION_VOLUME_FACTOR")
             };
-        } else if (lowerbound && secondBound) {
+        } else if (lowerbound && secondBound && upperbound) {
             const extrapolateQuery = `
                 SELECT 
                     RMDE_SAM_ACC.Extrapolate(?, ?, ?, ?, ?) AS OIL_FORMATION_VOLUME_FACTOR,
