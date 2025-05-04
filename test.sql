@@ -40,7 +40,6 @@ PVT_WITH_END_DATE AS (
     FROM YOUR_SCHEMA.COMPLETION_PVT_CHARACTERISTICS c
     WHERE ID_COMPLETION = COMPLETION
       AND TEST_DATE <= LAST_DAY(VRR_DATE)
-      AND TEST_DATE >= PRESSURE
     ORDER BY TEST_DATE DESC
 ),
 -- Step 2: Find an exact match for the given pressure (equivalent to @ExactMatch)
