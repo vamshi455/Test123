@@ -228,4 +228,117 @@ $$
                     RMDE_SAM_ACC.Extrapolate(:1, :2, :3, :10, :11) AS SOLUTION_GAS_OIL_RATIO,
                     RMDE_SAM_ACC.Extrapolate(:1, :2, :3, :12, :13) AS VISCOSITY_OIL,
                     RMDE_SAM_ACC.Extrapolate(:1, :2, :3, :14, :15) AS VISCOSITY_WATER,
-                    RMDE_SAM_ACC.Extrapolate(:1, :2, :3, :16, :17
+                    RMDE_SAM_ACC.Extrapolate(:1, :2, :3, :16, :17) AS VISCOSITY_GAS,
+                    RMDE_SAM_ACC.Extrapolate(:1, :2, :3, :18, :19) AS INJECTED_GAS_FORMATION_VOLUME_FACTOR,
+                    RMDE_SAM_ACC.Extrapolate(:1, :2, :3, :20, :21) AS INJECTED_WATER_FORMATION_VOLUME_FACTOR
+            `;
+            const extrapolateResult = snowflake.execute({ sqlText: extrapolateQuery, binds: [
+                pressure, lowestBound.PRESSURE, secondLowestBound.PRESSURE,
+                lowestBound.OIL_FORMATION_VOLUME_FACTOR, secondLowestBound.OIL_FORMATION_VOLUME_FACTOR,
+                lowestBound.GAS_FORMATION_VOLUME_FACTOR, secondLowestBound.GAS_FORMATION_VOLUME_FACTOR,
+                lowestBound.WATER_FORMATION_VOLUME_FACTOR, secondLowestBound.WATER_FORMATION_VOLUME_FACTOR,
+                lowestBound.SOLUTION_GAS_OIL_RATIO, secondLowestBound.SOLUTION_GAS_OIL_RATIO,
+                lowestBound.VISCOSITY_OIL, secondLowestBound.VISCOSITY_OIL,
+                lowestBound.VISCOSITY_WATER, secondLowestBound.VISCOSITY_WATER,
+                lowestBound.VISCOSITY_GAS, secondLowestBound.VISCOSITY_GAS,
+                lowestBound.INJECTED_GAS_FORMATION_VOLUME_FACTOR, secondLowestBound.INJECTED_GAS_FORMATION_VOLUME_FACTOR,
+                lowestBound.INJECTED_WATER_FORMATION_VOLUME_FACTOR, secondLowestBound.INJECTED_WATER_FORMATION_VOLUME_FACTOR
+            ]});
+            extrapolateResult.next();
+            result = {
+                PRESSURE: pressure,
+                OIL_FORMATION_VOLUME_FACTOR: extrapolateResult.getColumnValue(1),
+                GAS_FORMATION_VOLUME_FACTOR: extrapolateResult.getColumnValue(2),
+                WATER_FORMATION_VOLUME_FACTOR: extrapolateResult.getColumnValue(3),
+                SOLUTION_GAS_OIL_RATIO: extrapolateResult.getColumnValue(4),
+                VISCOSITY_OIL: extrapolateResult.getColumnValue(5),
+                VISCOSITY_WATER: extrapolateResult.getColumnValue(6),
+                VISCOSITY_GAS: extrapolateResult.getColumnValue(7),
+                INJECTED_GAS_FORMATION_VOLUME_FACTOR: extrapolateResult.getColumnValue(8),
+                INJECTED_WATER_FORMATION_VOLUME_FACTOR: extrapolateResult.getColumnValue(9)
+            };
+        } else if (pressure > highestPressure && highestBound && secondHighestBound) {
+            const extrapolateQuery = `
+                SELECT 
+                    RMDE_SAM_ACC.Extrapolate(:1, :2, :3, :4, :5) AS OIL_FORMATION_VOLUME_FACTOR,
+                    RMDE_SAM_ACC.Extrapolate(:1, :2, :3, :6, :7) AS GAS_FORMATION_VOLUME_FACTOR,
+                    RMDE_SAM_ACC.Extrapolate(:1, :2, :3, :8, :9) AS WATER_FORMATION_VOLUME_FACTOR,
+                    RMDE_SAM_ACC.Extrapolate(:1, :2, :3, :10, :11) AS SOLUTION_GAS_OIL_RATIO,
+                    RMDE_SAM_ACC.Extrapolate(:1, :2, :3, :12, :13) AS VISCOSITY_OIL,
+                    RMDE_SAM_ACC.Extrapolate(:1, :2, :3, :14, :15) AS VISCOSITY_WATER,
+                    RMDE_SAM_ACC.Extrapolate(:1, :2, :3, :16, :17) AS VISCOSITY_GAS,
+                    RMDE_SAM_ACC.Extrapolate(:1, :2, :3, :18, :19) AS INJECTED_GAS_FORMATION_VOLUME_FACTOR,
+                    RMDE_SAM_ACC.Extrapolate(:1, :2, :3, :20, :21) AS INJECTED_WATER_FORMATION_VOLUME_FACTOR
+            `;
+            const extrapolateResult = snowflake.execute({ sqlText: extrapolateQuery, binds: [
+                pressure, highestBound.PRESSURE, secondHighestBound.PRESSURE,
+                highestBound.OIL_FORMATION_VOLUME_FACTOR, secondHighestBound.OIL_FORMATION_VOLUME_FACTOR,
+                highestBound.GAS_FORMATION_VOLUME_FACTOR, secondHighestBound.GAS_FORMATION_VOLUME_FACTOR,
+                highestBound.WATER_FORMATION_VOLUME_FACTOR, secondHighestBound.WATER_FORMATION_VOLUME_FACTOR,
+                highestBound.SOLUTION_GAS_OIL_RATIO, secondHighestBound.SOLUTION_GAS_OIL_RATIO,
+                highestBound.VISCOSITY_OIL, secondHighestBound.VISCOSITY_OIL,
+                highestBound.VISCOSITY_WATER, secondHighestBound.VISCOSITY_WATER,
+                highestBound.VISCOSITY_GAS, secondHighestBound.VISCOSITY_GAS,
+                highestBound.INJECTED_GAS_FORMATION_VOLUME_FACTOR, secondHighestBound.INJECTED_GAS_FORMATION_VOLUME_FACTOR,
+                highestBound.INJECTED_WATER_FORMATION_VOLUME_FACTOR, secondHighestBound.INJECTED_WATER_FORMATION_VOLUME_FACTOR
+            ]});
+            extrapolateResult.next();
+            result = {
+                PRESSURE: pressure,
+                OIL_FORMATION_VOLUME_FACTOR: extrapolateResult.getColumnValue(1),
+                GAS_FORMATION_VOLUME_FACTOR: extrapolateResult.getColumnValue(2),
+                WATER_FORMATION_VOLUME_FACTOR: extrapolateResult.getColumnValue(3),
+                SOLUTION_GAS_OIL_RATIO: extrapolateResult.getColumnValue(4),
+                VISCOSITY_OIL: extrapolateResult.getColumnValue(5),
+                VISCOSITY_WATER: extrapolateResult.getColumnValue(6),
+                VISCOSITY_GAS: extrapolateResult.getColumnValue(7),
+                INJECTED_GAS_FORMATION_VOLUME_FACTOR: extrapolateResult.getColumnValue(8),
+                INJECTED_WATER_FORMATION_VOLUME_FACTOR: extrapolateResult.getColumnValue(9)
+            };
+        } else if (lowestBound) {
+            result = {
+                PRESSURE: pressure,
+                OIL_FORMATION_VOLUME_FACTOR: lowestBound.OIL_FORMATION_VOLUME_FACTOR,
+                GAS_FORMATION_VOLUME_FACTOR: lowestBound.GAS_FORMATION_VOLUME_FACTOR,
+                WATER_FORMATION_VOLUME_FACTOR: lowestBound.WATER_FORMATION_VOLUME_FACTOR,
+                SOLUTION_GAS_OIL_RATIO: lowestBound.SOLUTION_GAS_OIL_RATIO,
+                VISCOSITY_OIL: lowestBound.VISCOSITY_OIL,
+                VISCOSITY_WATER: lowestBound.VISCOSITY_WATER,
+                VISCOSITY_GAS: lowestBound.VISCOSITY_GAS,
+                INJECTED_GAS_FORMATION_VOLUME_FACTOR: lowestBound.INJECTED_GAS_FORMATION_VOLUME_FACTOR,
+                INJECTED_WATER_FORMATION_VOLUME_FACTOR: lowestBound.INJECTED_WATER_FORMATION_VOLUME_FACTOR
+            };
+        } else {
+            result = {
+                PRESSURE: pressure,
+                OIL_FORMATION_VOLUME_FACTOR: null,
+                GAS_FORMATION_VOLUME_FACTOR: null,
+                WATER_FORMATION_VOLUME_FACTOR: null,
+                SOLUTION_GAS_OIL_RATIO: null,
+                VISCOSITY_OIL: null,
+                VISCOSITY_WATER: null,
+                VISCOSITY_GAS: null,
+                INJECTED_GAS_FORMATION_VOLUME_FACTOR: null,
+                INJECTED_WATER_FORMATION_VOLUME_FACTOR: null
+            };
+        }
+
+        // Step 12: Round the results to 5 decimal places
+        const roundedResult = {
+            PRESSURE: Math.round(result.PRESSURE * 100000) / 100000,
+            OIL_FORMATION_VOLUME_FACTOR: result.OIL_FORMATION_VOLUME_FACTOR ? Math.round(result.OIL_FORMATION_VOLUME_FACTOR * 100000) / 100000 : null,
+            GAS_FORMATION_VOLUME_FACTOR: result.GAS_FORMATION_VOLUME_FACTOR ? Math.round(result.GAS_FORMATION_VOLUME_FACTOR * 100000) / 100000 : null,
+            WATER_FORMATION_VOLUME_FACTOR: result.WATER_FORMATION_VOLUME_FACTOR ? Math.round(result.WATER_FORMATION_VOLUME_FACTOR * 100000) / 100000 : null,
+            SOLUTION_GAS_OIL_RATIO: result.SOLUTION_GAS_OIL_RATIO ? Math.round(result.SOLUTION_GAS_OIL_RATIO * 100000) / 100000 : null,
+            VISCOSITY_OIL: result.VISCOSITY_OIL ? Math.round(result.VISCOSITY_OIL * 100000) / 100000 : null,
+            VISCOSITY_WATER: result.VISCOSITY_WATER ? Math.round(result.VISCOSITY_WATER * 100000) / 100000 : null,
+            VISCOSITY_GAS: result.VISCOSITY_GAS ? Math.round(result.VISCOSITY_GAS * 100000) / 100000 : null,
+            INJECTED_GAS_FORMATION_VOLUME_FACTOR: result.INJECTED_GAS_FORMATION_VOLUME_FACTOR ? Math.round(result.INJECTED_GAS_FORMATION_VOLUME_FACTOR * 100000) / 100000 : null,
+            INJECTED_WATER_FORMATION_VOLUME_FACTOR: result.INJECTED_WATER_FORMATION_VOLUME_FACTOR ? Math.round(result.INJECTED_WATER_FORMATION_VOLUME_FACTOR * 100000) / 100000 : null
+        };
+
+        // Step 13: Write the result to the output table
+        rowWriter.writeRow(roundedResult);
+    }
+}
+$$;
