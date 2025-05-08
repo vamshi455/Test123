@@ -250,7 +250,7 @@ ExtrapolatedLow AS (
 ExtrapolatedHigh AS (
     SELECT 
         pressure AS PRESSURE,
-        RMDE_SAM_ACC16px; font-size: inherit;">RMDE_SAM_ACC.Extrapolate(
+        RMDE_SAM_ACC.Extrapolate(
             pressure,
             h.PRESSURE,
             sh.PRESSURE,
@@ -443,5 +443,6 @@ FinalResult AS (
       AND NOT EXISTS (SELECT 1 FROM ExtrapolatedHigh)
       AND NOT EXISTS (SELECT 1 FROM SingleBound)
 )
-SELECT * FROM FinalResult;
+SELECT * 
+FROM FinalResult;
 $$;
