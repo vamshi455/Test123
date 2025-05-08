@@ -7,52 +7,79 @@ Pressure_End_Dates AS (
     SELECT
         ID_PATTERN,
         DATE,
+        PRESSURE,
         COALESCE(
             LEAD(DATE, 1) OVER (PARTITION BY ID_PATTERN ORDER BY DATE),
             TO_TIMESTAMP('9999-12-31 00:00:00')
         ) AS DATUM
-    FROM RMDE.SAM_ACC.PATTERN_PRESSURE
+    FROM RMDE_SAM_ACC.PATTERN_PRESSURE
 ),
 
--- CTE 2: Join daily_volume with pressure end dates to filter valid completions
-Filtered_Daily_Volume AS (
+-- CTE 2: Join daily_volume with pattern_contribution_factor to get ID_PATTERN
+Daily_Volume_With_Pattern AS (
     SELECT 
-        dv.ID_PATTERN,
+        pcf.ID_PATTERN,
         dv.COMPLETION_ID,
         dv.PROD_DATE AS DATE,
         dv.THEOR_OIL_VOL_STB,
         dv.THEOR_WATER_VOL_STB,
         dv.THEOR_GAS_VOL_KSCF,
         dv.CUMULATIVE_INJECTION_VOLUME_res_bbl,
-        dv.CUMULATIVE_PRODUCTION_VOLUME_res_bbl,
-        ap.PRESSURE AS PRESSURE_DATE
-    FROM TRUSTED_DB.PRODUCTION_VOLUMES.DAILY_OILFIELD dv
-    JOIN Pressure_End_Dates ped
-        ON dv.ID_PATTERN = ped.ID_PATTERN
-    JOIN RMDE.SAM_ACC.PATTERN_PRESSURE ap 
-        ON dv.ID_PATTERN = ap.ID_PATTERN
-        AND dv.PROD_DATE >= ap.DATE
-        AND dv.PROD_DATE < ped.DATUM
+        dv.CUMULATIVE_PRODUCTION_VOLUME_res_bbl
+    FROM TRUSTED_DB.PRODUCTION_VOLUME.PRODUCTION_VOLUMES_DAILY_OILFIELD dv
+    JOIN RMDE_SAM_ACC.PATTERN_CONTRIBUTION_FACTOR pcf
+        ON dv.COMPLETION_ID = pcf.ID_COMPLETION
+        AND dv.PROD_DATE >= pcf.EFFECT_DATE
+        -- Ensure we pick the most recent EFFECT_DATE for the pattern contribution
+        AND pcf.EFFECT_DATE = (
+            SELECT MAX(EFFECT_DATE)
+            FROM RMDE_SAM_ACC.PATTERN_CONTRIBUTION_FACTOR pcf2
+            WHERE pcf2.ID_COMPLETION = dv.COMPLETION_ID
+            AND dv.PROD_DATE >= pcf2.EFFECT_DATE
+        )
 ),
 
--- CTE 3: Match split factors with the most recent effective date
+-- CTE 3: Filter daily volume with pressure data and compute interpolated pressure using InterpolatePVTCompletionTest
+Filtered_Daily_Volume AS (
+    SELECT 
+        dvwp.ID_PATTERN,
+        dvwp.COMPLETION_ID,
+        dvwp.DATE,
+        dvwp.THEOR_OIL_VOL_STB,
+        dvwp.THEOR_WATER_VOL_STB,
+        dvwp.THEOR_GAS_VOL_KSCF,
+        dvwp.CUMULATIVE_INJECTION_VOLUME_res_bbl,
+        dvwp.CUMULATIVE_PRODUCTION_VOLUME_res_bbl,
+        RMDE_SAM_ACC.InterpolatePVTCompletionTest(
+            dvwp.COMPLETION_ID, 
+            ped.PRESSURE, 
+            dvwp.DATE
+        ) AS PRESSURE_DATE
+    FROM Daily_Volume_With_Pattern dvwp
+    JOIN Pressure_End_Dates ped
+        ON dvwp.ID_PATTERN = ped.ID_PATTERN
+        AND dvwp.DATE >= ped.DATE
+        AND dvwp.DATE < ped.DATUM
+),
+
+-- CTE 4: Match split factors with the most recent effective date
 Split_Factors_Matched AS (
     SELECT 
         sf.*,
         fdv.ID_PATTERN,
         fdv.DATE AS EFFECT_DATE
-    FROM RMDE.SAM_ACC.PATTERN_CONTRIBUTION_FACTOR sf
+    FROM RMDE_SAM_ACC.PATTERN_CONTRIBUTION_FACTOR sf
     JOIN Filtered_Daily_Volume fdv
         ON sf.ID_PATTERN = fdv.ID_PATTERN
         AND fdv.DATE <= (
             SELECT MAX(EFFECT_DATE)
-            FROM RMDE.SAM_ACC.PATTERN_CONTRIBUTION_FACTOR pcf
+            FROM RMDE_SAM_ACC.PATTERN_CONTRIBUTION_FACTOR pcf
             WHERE pcf.ID_PATTERN = sf.ID_PATTERN
             AND fdv.DATE <= pcf.EFFECT_DATE
         )
 ),
 
--- CTE 4: Aggregate the data
+-- CTE 5: Aggregate the data
 Aggregated_Data AS (
     SELECT
         sfm.ID_PATTERN,
@@ -83,7 +110,7 @@ SELECT
     agg.CUMULATIVE_PRODUCTION_VOLUME_res_bbl AS PRODUCTION_VOLUME_res_bbl,
     agg.GAS_FORMATION_VOLUME_FACTOR,
     agg.WATER_FORMATION_VOLUME_FACTOR,
-    agg.THEOR_WATER_INJ_VOL_STB AS GAS_INJ_VOLUME_stb,  -- Adjusted to use THEOR_WATER_INJ_VOL_STB as per mapping
+    agg.THEOR_WATER_INJ_VOL_STB AS GAS_INJ_VOLUME_stb,
     agg.THEOR_WATER_INJ_VOL_STB AS WATER_INJ_VOLUME_stb,
     agg.INJECTED_WATER_FORMATION_VOLUME_FACTOR AS WATER_INJ_VOLUME,
     agg.INJECTED_GAS_FORMATION_VOLUME_FACTOR AS GAS_WELL_GAS_VOLUME,
