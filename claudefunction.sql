@@ -1,6 +1,6 @@
 CREATE OR REPLACE FUNCTION vrr.InterpolatePVTCompletionTest(
     pressure FLOAT,
-    completion VARCHAR(32),
+    completion VARCHAR,
     vrr_date DATE
 )
 RETURNS TABLE (
@@ -16,275 +16,29 @@ RETURNS TABLE (
     INJECTED_GAS_FORMATION_VOLUME_FACTOR FLOAT,
     INJECTED_WATER_FORMATION_VOLUME_FACTOR FLOAT
 )
+LANGUAGE JAVASCRIPT
 AS
 $$
--- Helper function to perform extrapolation (equivalent to vrr.Extrapolate in SQL Server)
-CREATE OR REPLACE FUNCTION vrr.Extrapolate(x1 FLOAT, x2 FLOAT, y1 FLOAT, y2 FLOAT)
-RETURNS FLOAT
-AS
-$$
-  CASE 
-    WHEN x1 = x2 THEN y1
-    ELSE y1 + (pressure - x1) * (y2 - y1) / (x2 - x1)
-  END
-$$;
+function extrapolate(x1, x2, y1, y2, x) {
+    if (x1 === x2) return y1;
+    return y1 + (x - x1) * (y2 - y1) / (x2 - x1);
+}
 
--- Create temporary tables (Snowflake uses temporary tables instead of table variables)
-CREATE TEMPORARY TABLE ExactMatch (
-    PRESSURE FLOAT,
-    OIL_FORMATION_VOLUME_FACTOR FLOAT,
-    GAS_FORMATION_VOLUME_FACTOR FLOAT,
-    WATER_FORMATION_VOLUME_FACTOR FLOAT,
-    SOLUTION_GAS_OIL_RATIO FLOAT,
-    VOLATIZED_OIL_GAS_RATIO FLOAT,
-    VISCOSITY_OIL FLOAT,
-    VISCOSITY_WATER FLOAT,
-    VISCOSITY_GAS FLOAT,
-    INJECTED_GAS_FORMATION_VOLUME_FACTOR FLOAT,
-    INJECTED_WATER_FORMATION_VOLUME_FACTOR FLOAT
-);
+// Get the last day of the month for vrr_date
+function lastDayOfMonth(date) {
+    let d = new Date(date);
+    d.setMonth(d.getMonth() + 1);
+    d.setDate(0);
+    return d.toISOString().split('T')[0];
+}
 
-CREATE TEMPORARY TABLE lowerbound (
-    PRESSURE FLOAT,
-    OIL_FORMATION_VOLUME_FACTOR FLOAT,
-    GAS_FORMATION_VOLUME_FACTOR FLOAT,
-    WATER_FORMATION_VOLUME_FACTOR FLOAT,
-    SOLUTION_GAS_OIL_RATIO FLOAT,
-    VOLATIZED_OIL_GAS_RATIO FLOAT,
-    VISCOSITY_OIL FLOAT,
-    VISCOSITY_WATER FLOAT,
-    VISCOSITY_GAS FLOAT,
-    INJECTED_GAS_FORMATION_VOLUME_FACTOR FLOAT,
-    INJECTED_WATER_FORMATION_VOLUME_FACTOR FLOAT
-);
+const monthEnd = lastDayOfMonth(VRR_DATE);
 
-CREATE TEMPORARY TABLE upperbound (
-    PRESSURE FLOAT,
-    OIL_FORMATION_VOLUME_FACTOR FLOAT,
-    GAS_FORMATION_VOLUME_FACTOR FLOAT,
-    WATER_FORMATION_VOLUME_FACTOR FLOAT,
-    SOLUTION_GAS_OIL_RATIO FLOAT,
-    VOLATIZED_OIL_GAS_RATIO FLOAT,
-    VISCOSITY_OIL FLOAT,
-    VISCOSITY_WATER FLOAT,
-    VISCOSITY_GAS FLOAT,
-    INJECTED_GAS_FORMATION_VOLUME_FACTOR FLOAT,
-    INJECTED_WATER_FORMATION_VOLUME_FACTOR FLOAT
-);
-
-CREATE TEMPORARY TABLE secondBOUND (
-    PRESSURE FLOAT,
-    OIL_FORMATION_VOLUME_FACTOR FLOAT,
-    GAS_FORMATION_VOLUME_FACTOR FLOAT,
-    WATER_FORMATION_VOLUME_FACTOR FLOAT,
-    SOLUTION_GAS_OIL_RATIO FLOAT,
-    VOLATIZED_OIL_GAS_RATIO FLOAT,
-    VISCOSITY_OIL FLOAT,
-    VISCOSITY_WATER FLOAT,
-    VISCOSITY_GAS FLOAT,
-    INJECTED_GAS_FORMATION_VOLUME_FACTOR FLOAT,
-    INJECTED_WATER_FORMATION_VOLUME_FACTOR FLOAT
-);
-
-CREATE TEMPORARY TABLE interpolatedValues (
-    PRESSURE FLOAT,
-    OIL_FORMATION_VOLUME_FACTOR FLOAT,
-    GAS_FORMATION_VOLUME_FACTOR FLOAT,
-    WATER_FORMATION_VOLUME_FACTOR FLOAT,
-    SOLUTION_GAS_OIL_RATIO FLOAT,
-    VOLATIZED_OIL_GAS_RATIO FLOAT,
-    VISCOSITY_OIL FLOAT,
-    VISCOSITY_WATER FLOAT,
-    VISCOSITY_GAS FLOAT,
-    INJECTED_GAS_FORMATION_VOLUME_FACTOR FLOAT,
-    INJECTED_WATER_FORMATION_VOLUME_FACTOR FLOAT
-);
-
-CREATE TEMPORARY TABLE PVTwithEndDate (
-    ID_COMPLETION VARCHAR(32),
-    TEST_DATE DATE,
-    PRESSURE FLOAT,
-    OIL_FORMATION_VOLUME_FACTOR FLOAT,
-    GAS_FORMATION_VOLUME_FACTOR FLOAT,
-    WATER_FORMATION_VOLUME_FACTOR FLOAT,
-    SOLUTION_GAS_OIL_RATIO FLOAT,
-    VOLATIZED_OIL_GAS_RATIO FLOAT,
-    VISCOSITY_OIL FLOAT,
-    VISCOSITY_WATER FLOAT,
-    VISCOSITY_GAS FLOAT,
-    INJECTED_GAS_FORMATION_VOLUME_FACTOR FLOAT,
-    INJECTED_WATER_FORMATION_VOLUME_FACTOR FLOAT,
-    END_DATE DATE
-);
-
--- Insert data into PVTwithEndDate (using LAST_DAY instead of EOMONTH)
-INSERT INTO PVTwithEndDate
-SELECT
-    ID_COMPLETION,
-    TEST_DATE,
-    PRESSURE,
-    OIL_FORMATION_VOLUME_FACTOR,
-    GAS_FORMATION_VOLUME_FACTOR,
-    WATER_FORMATION_VOLUME_FACTOR,
-    SOLUTION_GAS_OIL_RATIO,
-    VOLATIZED_OIL_GAS_RATIO,
-    VISCOSITY_OIL,
-    VISCOSITY_WATER,
-    VISCOSITY_GAS,
-    INJECTED_GAS_FORMATION_VOLUME_FACTOR,
-    INJECTED_WATER_FORMATION_VOLUME_FACTOR,
-    COALESCE(
-        (SELECT min(TEST_DATE)
-         FROM vrr.COMPLETION_PVT_CHARACTERISTICS cpvt
-         WHERE cpvt.TEST_DATE > vrr.COMPLETION_PVT_CHARACTERISTICS.TEST_DATE
-           AND cpvt.ID_COMPLETION = vrr.COMPLETION_PVT_CHARACTERISTICS.ID_COMPLETION),
-        '9999-12-31'::DATE
-    ) AS END_DATE
-FROM vrr.COMPLETION_PVT_CHARACTERISTICS
-WHERE ID_COMPLETION = completion
-  AND TEST_DATE <= LAST_DAY(vrr_date)
-  AND TEST_DATE >= pressure
-ORDER BY TEST_DATE DESC;
-
--- Exact match
-INSERT INTO ExactMatch
-SELECT TOP 1
-    PRESSURE,
-    OIL_FORMATION_VOLUME_FACTOR,
-    GAS_FORMATION_VOLUME_FACTOR,
-    WATER_FORMATION_VOLUME_FACTOR,
-    SOLUTION_GAS_OIL_RATIO,
-    VOLATIZED_OIL_GAS_RATIO,
-    VISCOSITY_OIL,
-    VISCOSITY_WATER,
-    VISCOSITY_GAS,
-    INJECTED_GAS_FORMATION_VOLUME_FACTOR,
-    INJECTED_WATER_FORMATION_VOLUME_FACTOR
-FROM PVTwithEndDate
-WHERE TEST_DATE = (
-    SELECT max(TEST_DATE)
-    FROM PVTwithEndDate p
-    WHERE p.PRESSURE = pressure
-      AND p.ID_COMPLETION = completion
-      AND p.TEST_DATE <= LAST_DAY(vrr_date)
-)
-  AND PRESSURE = pressure
-ORDER BY TEST_DATE DESC;
-
--- Lowerbound
-INSERT INTO lowerbound
-SELECT TOP 1
-    PRESSURE,
-    OIL_FORMATION_VOLUME_FACTOR,
-    GAS_FORMATION_VOLUME_FACTOR,
-    WATER_FORMATION_VOLUME_FACTOR,
-    SOLUTION_GAS_OIL_RATIO,
-    VOLATIZED_OIL_GAS_RATIO,
-    VISCOSITY_OIL,
-    VISCOSITY_WATER,
-    VISCOSITY_GAS,
-    INJECTED_GAS_FORMATION_VOLUME_FACTOR,
-    INJECTED_WATER_FORMATION_VOLUME_FACTOR
-FROM PVTwithEndDate
-WHERE PRESSURE < pressure
-  AND ID_COMPLETION = completion
-  AND TEST_DATE <= LAST_DAY(vrr_date)
-ORDER BY PRESSURE DESC, TEST_DATE DESC;
-
--- Upperbound
-INSERT INTO upperbound
-SELECT TOP 1
-    PRESSURE,
-    OIL_FORMATION_VOLUME_FACTOR,
-    GAS_FORMATION_VOLUME_FACTOR,
-    WATER_FORMATION_VOLUME_FACTOR,
-    SOLUTION_GAS_OIL_RATIO,
-    VOLATIZED_OIL_GAS_RATIO,
-    VISCOSITY_OIL,
-    VISCOSITY_WATER,
-    VISCOSITY_GAS,
-    INJECTED_GAS_FORMATION_VOLUME_FACTOR,
-    INJECTED_WATER_FORMATION_VOLUME_FACTOR
-FROM PVTwithEndDate
-WHERE PRESSURE > pressure
-  AND ID_COMPLETION = completion
-  AND TEST_DATE <= LAST_DAY(vrr_date)
-ORDER BY PRESSURE ASC, TEST_DATE DESC;
-
--- If lowerbound and upperbound exist but interpolatedValues is empty
-IF ((SELECT count(*) FROM lowerbound) = 1 AND (SELECT count(*) FROM upperbound) = 1 AND (SELECT count(*) FROM interpolatedValues) = 0) THEN
-    INSERT INTO interpolatedValues
+// Query to get PVT data with end dates
+const pvtQuery = `
     SELECT
-        pressure,
-        vrr.Extrapolate(
-            (SELECT PRESSURE FROM lowerbound),
-            (SELECT PRESSURE FROM upperbound),
-            (SELECT OIL_FORMATION_VOLUME_FACTOR FROM lowerbound),
-            (SELECT OIL_FORMATION_VOLUME_FACTOR FROM upperbound)
-        ),
-        vrr.Extrapolate(
-            (SELECT PRESSURE FROM lowerbound),
-            (SELECT PRESSURE FROM upperbound),
-            (SELECT GAS_FORMATION_VOLUME_FACTOR FROM lowerbound),
-            (SELECT GAS_FORMATION_VOLUME_FACTOR FROM upperbound)
-        ),
-        vrr.Extrapolate(
-            (SELECT PRESSURE FROM lowerbound),
-            (SELECT PRESSURE FROM upperbound),
-            (SELECT WATER_FORMATION_VOLUME_FACTOR FROM lowerbound),
-            (SELECT WATER_FORMATION_VOLUME_FACTOR FROM upperbound)
-        ),
-        vrr.Extrapolate(
-            (SELECT PRESSURE FROM lowerbound),
-            (SELECT PRESSURE FROM upperbound),
-            (SELECT SOLUTION_GAS_OIL_RATIO FROM lowerbound),
-            (SELECT SOLUTION_GAS_OIL_RATIO FROM upperbound)
-        ),
-        vrr.Extrapolate(
-            (SELECT PRESSURE FROM lowerbound),
-            (SELECT PRESSURE FROM upperbound),
-            (SELECT VOLATIZED_OIL_GAS_RATIO FROM lowerbound),
-            (SELECT VOLATIZED_OIL_GAS_RATIO FROM upperbound)
-        ),
-        vrr.Extrapolate(
-            (SELECT PRESSURE FROM lowerbound),
-            (SELECT PRESSURE FROM upperbound),
-            (SELECT VISCOSITY_OIL FROM lowerbound),
-            (SELECT VISCOSITY_OIL FROM upperbound)
-        ),
-        vrr.Extrapolate(
-            (SELECT PRESSURE FROM lowerbound),
-            (SELECT PRESSURE FROM upperbound),
-            (SELECT VISCOSITY_WATER FROM lowerbound),
-            (SELECT VISCOSITY_WATER FROM upperbound)
-        ),
-        vrr.Extrapolate(
-            (SELECT PRESSURE FROM lowerbound),
-            (SELECT PRESSURE FROM upperbound),
-            (SELECT VISCOSITY_GAS FROM lowerbound),
-            (SELECT VISCOSITY_GAS FROM upperbound)
-        ),
-        vrr.Extrapolate(
-            (SELECT PRESSURE FROM lowerbound),
-            (SELECT PRESSURE FROM upperbound),
-            (SELECT INJECTED_GAS_FORMATION_VOLUME_FACTOR FROM lowerbound),
-            (SELECT INJECTED_GAS_FORMATION_VOLUME_FACTOR FROM upperbound)
-        ),
-        vrr.Extrapolate(
-            (SELECT PRESSURE FROM lowerbound),
-            (SELECT PRESSURE FROM upperbound),
-            (SELECT INJECTED_WATER_FORMATION_VOLUME_FACTOR FROM lowerbound),
-            (SELECT INJECTED_WATER_FORMATION_VOLUME_FACTOR FROM upperbound)
-        );
-END IF;
-
--- If there is an upperbound but no lowerbound
-IF ((SELECT count(*) FROM upperbound) = 1 AND (SELECT count(*) FROM lowerbound) = 0 AND 
-    (SELECT count(*) FROM ExactMatch) = 0 AND 
-    (SELECT count(*) FROM PVTwithEndDate WHERE ID_COMPLETION = completion AND PRESSURE > pressure AND TEST_DATE <= LAST_DAY(vrr_date)) > 1) THEN
-    
-    INSERT INTO secondBOUND
-    SELECT TOP 1
+        ID_COMPLETION,
+        TEST_DATE,
         PRESSURE,
         OIL_FORMATION_VOLUME_FACTOR,
         GAS_FORMATION_VOLUME_FACTOR,
@@ -295,132 +49,319 @@ IF ((SELECT count(*) FROM upperbound) = 1 AND (SELECT count(*) FROM lowerbound) 
         VISCOSITY_WATER,
         VISCOSITY_GAS,
         INJECTED_GAS_FORMATION_VOLUME_FACTOR,
-        INJECTED_WATER_FORMATION_VOLUME_FACTOR
-    FROM PVTwithEndDate pvt
-    WHERE pvt.PRESSURE = (
-        SELECT min(pressure)
-        FROM PVTwithEndDate p
-        WHERE p.PRESSURE > (SELECT PRESSURE FROM upperbound)
-          AND p.ID_COMPLETION = completion
-          AND p.TEST_DATE <= LAST_DAY(vrr_date)
-    )
-    ORDER BY TEST_DATE DESC;
+        INJECTED_WATER_FORMATION_VOLUME_FACTOR,
+        COALESCE(
+            (SELECT min(TEST_DATE)
+             FROM vrr.COMPLETION_PVT_CHARACTERISTICS cpvt
+             WHERE cpvt.TEST_DATE > vrr.COMPLETION_PVT_CHARACTERISTICS.TEST_DATE
+               AND cpvt.ID_COMPLETION = vrr.COMPLETION_PVT_CHARACTERISTICS.ID_COMPLETION),
+            '9999-12-31'
+        ) AS END_DATE
+    FROM vrr.COMPLETION_PVT_CHARACTERISTICS
+    WHERE ID_COMPLETION = ?
+      AND TEST_DATE <= ?
+      AND TEST_DATE >= ?
+    ORDER BY TEST_DATE DESC
+`;
 
-    -- If there is an exact match
-    IF ((SELECT count(*) FROM ExactMatch) = 1) THEN
-        INSERT INTO interpolatedValues
-        SELECT
-            PRESSURE,
-            OIL_FORMATION_VOLUME_FACTOR,
-            GAS_FORMATION_VOLUME_FACTOR,
-            WATER_FORMATION_VOLUME_FACTOR,
-            SOLUTION_GAS_OIL_RATIO,
-            VOLATIZED_OIL_GAS_RATIO,
-            VISCOSITY_OIL,
-            VISCOSITY_WATER,
-            VISCOSITY_GAS,
-            INJECTED_GAS_FORMATION_VOLUME_FACTOR,
-            INJECTED_WATER_FORMATION_VOLUME_FACTOR
-        FROM ExactMatch;
-    END IF;
+const pvtStmt = snowflake.createStatement({
+    sqlText: pvtQuery,
+    binds: [COMPLETION, monthEnd, PRESSURE]
+});
 
-    -- If there is no exact match but we have upperbound and secondBOUND
-    IF ((SELECT count(*) FROM upperbound) = 1 AND (SELECT count(*) FROM secondBOUND) = 1 AND (SELECT count(*) FROM ExactMatch) = 0) THEN
-        INSERT INTO interpolatedValues
-        SELECT
-            pressure,
-            vrr.Extrapolate(
-                (SELECT PRESSURE FROM upperbound),
-                (SELECT PRESSURE FROM secondBOUND),
-                (SELECT OIL_FORMATION_VOLUME_FACTOR FROM upperbound),
-                (SELECT OIL_FORMATION_VOLUME_FACTOR FROM secondBOUND)
-            ),
-            vrr.Extrapolate(
-                (SELECT PRESSURE FROM upperbound),
-                (SELECT PRESSURE FROM secondBOUND),
-                (SELECT GAS_FORMATION_VOLUME_FACTOR FROM upperbound),
-                (SELECT GAS_FORMATION_VOLUME_FACTOR FROM secondBOUND)
-            ),
-            vrr.Extrapolate(
-                (SELECT PRESSURE FROM upperbound),
-                (SELECT PRESSURE FROM secondBOUND),
-                (SELECT WATER_FORMATION_VOLUME_FACTOR FROM upperbound),
-                (SELECT WATER_FORMATION_VOLUME_FACTOR FROM secondBOUND)
-            ),
-            vrr.Extrapolate(
-                (SELECT PRESSURE FROM upperbound),
-                (SELECT PRESSURE FROM secondBOUND),
-                (SELECT SOLUTION_GAS_OIL_RATIO FROM upperbound),
-                (SELECT SOLUTION_GAS_OIL_RATIO FROM secondBOUND)
-            ),
-            vrr.Extrapolate(
-                (SELECT PRESSURE FROM upperbound),
-                (SELECT PRESSURE FROM secondBOUND),
-                (SELECT VOLATIZED_OIL_GAS_RATIO FROM upperbound),
-                (SELECT VOLATIZED_OIL_GAS_RATIO FROM secondBOUND)
-            ),
-            vrr.Extrapolate(
-                (SELECT PRESSURE FROM upperbound),
-                (SELECT PRESSURE FROM secondBOUND),
-                (SELECT VISCOSITY_OIL FROM upperbound),
-                (SELECT VISCOSITY_OIL FROM secondBOUND)
-            ),
-            vrr.Extrapolate(
-                (SELECT PRESSURE FROM upperbound),
-                (SELECT PRESSURE FROM secondBOUND),
-                (SELECT VISCOSITY_WATER FROM upperbound),
-                (SELECT VISCOSITY_WATER FROM secondBOUND)
-            ),
-            vrr.Extrapolate(
-                (SELECT PRESSURE FROM upperbound),
-                (SELECT PRESSURE FROM secondBOUND),
-                (SELECT VISCOSITY_GAS FROM upperbound),
-                (SELECT VISCOSITY_GAS FROM secondBOUND)
-            ),
-            vrr.Extrapolate(
-                (SELECT PRESSURE FROM upperbound),
-                (SELECT PRESSURE FROM secondBOUND),
-                (SELECT INJECTED_GAS_FORMATION_VOLUME_FACTOR FROM upperbound),
-                (SELECT INJECTED_GAS_FORMATION_VOLUME_FACTOR FROM secondBOUND)
-            ),
-            vrr.Extrapolate(
-                (SELECT PRESSURE FROM upperbound),
-                (SELECT PRESSURE FROM secondBOUND),
-                (SELECT INJECTED_WATER_FORMATION_VOLUME_FACTOR FROM upperbound),
-                (SELECT INJECTED_WATER_FORMATION_VOLUME_FACTOR FROM secondBOUND)
-            );
-    END IF;
+const pvtResults = pvtStmt.execute();
+const pvtData = [];
 
-    -- No active values found
-    IF ((SELECT count(*) FROM interpolatedValues) = 0) THEN
-        INSERT INTO interpolatedValues
-        SELECT
-            pressure,
-            NULL,
-            NULL,
-            NULL,
-            NULL,
-            NULL,
-            NULL,
-            NULL,
-            NULL,
-            NULL,
-            NULL;
-    END IF;
-END IF;
+while (pvtResults.next()) {
+    pvtData.push({
+        id_completion: pvtResults.getColumnValue("ID_COMPLETION"),
+        test_date: pvtResults.getColumnValue("TEST_DATE"),
+        pressure: pvtResults.getColumnValue("PRESSURE"),
+        oil_formation_volume_factor: pvtResults.getColumnValue("OIL_FORMATION_VOLUME_FACTOR"),
+        gas_formation_volume_factor: pvtResults.getColumnValue("GAS_FORMATION_VOLUME_FACTOR"),
+        water_formation_volume_factor: pvtResults.getColumnValue("WATER_FORMATION_VOLUME_FACTOR"),
+        solution_gas_oil_ratio: pvtResults.getColumnValue("SOLUTION_GAS_OIL_RATIO"),
+        volatized_oil_gas_ratio: pvtResults.getColumnValue("VOLATIZED_OIL_GAS_RATIO"),
+        viscosity_oil: pvtResults.getColumnValue("VISCOSITY_OIL"),
+        viscosity_water: pvtResults.getColumnValue("VISCOSITY_WATER"),
+        viscosity_gas: pvtResults.getColumnValue("VISCOSITY_GAS"),
+        injected_gas_formation_volume_factor: pvtResults.getColumnValue("INJECTED_GAS_FORMATION_VOLUME_FACTOR"),
+        injected_water_formation_volume_factor: pvtResults.getColumnValue("INJECTED_WATER_FORMATION_VOLUME_FACTOR"),
+        end_date: pvtResults.getColumnValue("END_DATE")
+    });
+}
 
--- Return the rounded values
-SELECT
-    ROUND(PRESSURE, 5),
-    ROUND(OIL_FORMATION_VOLUME_FACTOR, 5),
-    ROUND(GAS_FORMATION_VOLUME_FACTOR, 5),
-    ROUND(WATER_FORMATION_VOLUME_FACTOR, 5),
-    ROUND(SOLUTION_GAS_OIL_RATIO, 5),
-    ROUND(VOLATIZED_OIL_GAS_RATIO, 5),
-    ROUND(VISCOSITY_OIL, 5),
-    ROUND(VISCOSITY_WATER, 5),
-    ROUND(VISCOSITY_GAS, 5),
-    ROUND(INJECTED_GAS_FORMATION_VOLUME_FACTOR, 5),
-    ROUND(INJECTED_WATER_FORMATION_VOLUME_FACTOR, 5)
-FROM interpolatedValues;
+// Table variables equivalent
+let exactMatch = [];
+let lowerbound = [];
+let upperbound = [];
+let secondBound = [];
+let interpolatedValues = [];
+
+// Find exact match
+const exactMatches = pvtData.filter(row => 
+    row.pressure === PRESSURE && 
+    row.id_completion === COMPLETION && 
+    row.test_date <= monthEnd
+);
+
+if (exactMatches.length > 0) {
+    // Sort by test_date desc and take the first one
+    exactMatches.sort((a, b) => new Date(b.test_date) - new Date(a.test_date));
+    exactMatch.push(exactMatches[0]);
+}
+
+// Find lowerbound
+const lowerValues = pvtData.filter(row => 
+    row.pressure < PRESSURE && 
+    row.id_completion === COMPLETION && 
+    row.test_date <= monthEnd
+);
+
+if (lowerValues.length > 0) {
+    // Sort by pressure desc, then test_date desc
+    lowerValues.sort((a, b) => {
+        if (b.pressure !== a.pressure) {
+            return b.pressure - a.pressure;
+        }
+        return new Date(b.test_date) - new Date(a.test_date);
+    });
+    lowerbound.push(lowerValues[0]);
+}
+
+// Find upperbound
+const upperValues = pvtData.filter(row => 
+    row.pressure > PRESSURE && 
+    row.id_completion === COMPLETION && 
+    row.test_date <= monthEnd
+);
+
+if (upperValues.length > 0) {
+    // Sort by pressure asc, then test_date desc
+    upperValues.sort((a, b) => {
+        if (a.pressure !== b.pressure) {
+            return a.pressure - b.pressure;
+        }
+        return new Date(b.test_date) - new Date(a.test_date);
+    });
+    upperbound.push(upperValues[0]);
+}
+
+// Interpolate with lowerbound and upperbound if available
+if (lowerbound.length === 1 && upperbound.length === 1 && interpolatedValues.length === 0) {
+    interpolatedValues.push({
+        pressure: PRESSURE,
+        oil_formation_volume_factor: extrapolate(
+            lowerbound[0].pressure,
+            upperbound[0].pressure,
+            lowerbound[0].oil_formation_volume_factor,
+            upperbound[0].oil_formation_volume_factor,
+            PRESSURE
+        ),
+        gas_formation_volume_factor: extrapolate(
+            lowerbound[0].pressure,
+            upperbound[0].pressure,
+            lowerbound[0].gas_formation_volume_factor,
+            upperbound[0].gas_formation_volume_factor,
+            PRESSURE
+        ),
+        water_formation_volume_factor: extrapolate(
+            lowerbound[0].pressure,
+            upperbound[0].pressure,
+            lowerbound[0].water_formation_volume_factor,
+            upperbound[0].water_formation_volume_factor,
+            PRESSURE
+        ),
+        solution_gas_oil_ratio: extrapolate(
+            lowerbound[0].pressure,
+            upperbound[0].pressure,
+            lowerbound[0].solution_gas_oil_ratio,
+            upperbound[0].solution_gas_oil_ratio,
+            PRESSURE
+        ),
+        volatized_oil_gas_ratio: extrapolate(
+            lowerbound[0].pressure,
+            upperbound[0].pressure,
+            lowerbound[0].volatized_oil_gas_ratio,
+            upperbound[0].volatized_oil_gas_ratio,
+            PRESSURE
+        ),
+        viscosity_oil: extrapolate(
+            lowerbound[0].pressure,
+            upperbound[0].pressure,
+            lowerbound[0].viscosity_oil,
+            upperbound[0].viscosity_oil,
+            PRESSURE
+        ),
+        viscosity_water: extrapolate(
+            lowerbound[0].pressure,
+            upperbound[0].pressure,
+            lowerbound[0].viscosity_water,
+            upperbound[0].viscosity_water,
+            PRESSURE
+        ),
+        viscosity_gas: extrapolate(
+            lowerbound[0].pressure,
+            upperbound[0].pressure,
+            lowerbound[0].viscosity_gas,
+            upperbound[0].viscosity_gas,
+            PRESSURE
+        ),
+        injected_gas_formation_volume_factor: extrapolate(
+            lowerbound[0].pressure,
+            upperbound[0].pressure,
+            lowerbound[0].injected_gas_formation_volume_factor,
+            upperbound[0].injected_gas_formation_volume_factor,
+            PRESSURE
+        ),
+        injected_water_formation_volume_factor: extrapolate(
+            lowerbound[0].pressure,
+            upperbound[0].pressure,
+            lowerbound[0].injected_water_formation_volume_factor,
+            upperbound[0].injected_water_formation_volume_factor,
+            PRESSURE
+        )
+    });
+}
+
+// Handle the case where there's an upperbound but no lowerbound
+if (upperbound.length === 1 && lowerbound.length === 0 && exactMatch.length === 0 && 
+    pvtData.filter(row => 
+        row.id_completion === COMPLETION && 
+        row.pressure > PRESSURE && 
+        row.test_date <= monthEnd
+    ).length > 1) {
+    
+    // Find secondBound
+    const potentialSecondBounds = pvtData.filter(row => 
+        row.pressure > upperbound[0].pressure && 
+        row.id_completion === COMPLETION && 
+        row.test_date <= monthEnd
+    );
+    
+    if (potentialSecondBounds.length > 0) {
+        // Find the minimum pressure greater than upperbound
+        const minPressure = Math.min(...potentialSecondBounds.map(row => row.pressure));
+        const matchingRows = potentialSecondBounds.filter(row => row.pressure === minPressure);
+        
+        // Sort by test_date desc and take the first one
+        matchingRows.sort((a, b) => new Date(b.test_date) - new Date(a.test_date));
+        secondBound.push(matchingRows[0]);
+    }
+    
+    // If there's an exact match, use it
+    if (exactMatch.length === 1) {
+        interpolatedValues.push(exactMatch[0]);
+    }
+    // If there's a secondBound but no exact match, extrapolate
+    else if (upperbound.length === 1 && secondBound.length === 1 && exactMatch.length === 0) {
+        interpolatedValues.push({
+            pressure: PRESSURE,
+            oil_formation_volume_factor: extrapolate(
+                upperbound[0].pressure,
+                secondBound[0].pressure,
+                upperbound[0].oil_formation_volume_factor,
+                secondBound[0].oil_formation_volume_factor,
+                PRESSURE
+            ),
+            gas_formation_volume_factor: extrapolate(
+                upperbound[0].pressure,
+                secondBound[0].pressure,
+                upperbound[0].gas_formation_volume_factor,
+                secondBound[0].gas_formation_volume_factor,
+                PRESSURE
+            ),
+            water_formation_volume_factor: extrapolate(
+                upperbound[0].pressure,
+                secondBound[0].pressure,
+                upperbound[0].water_formation_volume_factor,
+                secondBound[0].water_formation_volume_factor,
+                PRESSURE
+            ),
+            solution_gas_oil_ratio: extrapolate(
+                upperbound[0].pressure,
+                secondBound[0].pressure,
+                upperbound[0].solution_gas_oil_ratio,
+                secondBound[0].solution_gas_oil_ratio,
+                PRESSURE
+            ),
+            volatized_oil_gas_ratio: extrapolate(
+                upperbound[0].pressure,
+                secondBound[0].pressure,
+                upperbound[0].volatized_oil_gas_ratio,
+                secondBound[0].volatized_oil_gas_ratio,
+                PRESSURE
+            ),
+            viscosity_oil: extrapolate(
+                upperbound[0].pressure,
+                secondBound[0].pressure,
+                upperbound[0].viscosity_oil,
+                secondBound[0].viscosity_oil,
+                PRESSURE
+            ),
+            viscosity_water: extrapolate(
+                upperbound[0].pressure,
+                secondBound[0].pressure,
+                upperbound[0].viscosity_water,
+                secondBound[0].viscosity_water,
+                PRESSURE
+            ),
+            viscosity_gas: extrapolate(
+                upperbound[0].pressure,
+                secondBound[0].pressure,
+                upperbound[0].viscosity_gas,
+                secondBound[0].viscosity_gas,
+                PRESSURE
+            ),
+            injected_gas_formation_volume_factor: extrapolate(
+                upperbound[0].pressure,
+                secondBound[0].pressure,
+                upperbound[0].injected_gas_formation_volume_factor,
+                secondBound[0].injected_gas_formation_volume_factor,
+                PRESSURE
+            ),
+            injected_water_formation_volume_factor: extrapolate(
+                upperbound[0].pressure,
+                secondBound[0].pressure,
+                upperbound[0].injected_water_formation_volume_factor,
+                secondBound[0].injected_water_formation_volume_factor,
+                PRESSURE
+            )
+        });
+    }
+}
+
+// If no values have been found, add null values
+if (interpolatedValues.length === 0) {
+    interpolatedValues.push({
+        pressure: PRESSURE,
+        oil_formation_volume_factor: null,
+        gas_formation_volume_factor: null,
+        water_formation_volume_factor: null,
+        solution_gas_oil_ratio: null,
+        volatized_oil_gas_ratio: null,
+        viscosity_oil: null,
+        viscosity_water: null,
+        viscosity_gas: null,
+        injected_gas_formation_volume_factor: null,
+        injected_water_formation_volume_factor: null
+    });
+}
+
+// Round values and return the result
+const result = interpolatedValues.map(row => ({
+    PRESSURE: row.pressure !== null ? Math.round(row.pressure * 100000) / 100000 : null,
+    OIL_FORMATION_VOLUME_FACTOR: row.oil_formation_volume_factor !== null ? Math.round(row.oil_formation_volume_factor * 100000) / 100000 : null,
+    GAS_FORMATION_VOLUME_FACTOR: row.gas_formation_volume_factor !== null ? Math.round(row.gas_formation_volume_factor * 100000) / 100000 : null,
+    WATER_FORMATION_VOLUME_FACTOR: row.water_formation_volume_factor !== null ? Math.round(row.water_formation_volume_factor * 100000) / 100000 : null,
+    SOLUTION_GAS_OIL_RATIO: row.solution_gas_oil_ratio !== null ? Math.round(row.solution_gas_oil_ratio * 100000) / 100000 : null,
+    VOLATIZED_OIL_GAS_RATIO: row.volatized_oil_gas_ratio !== null ? Math.round(row.volatized_oil_gas_ratio * 100000) / 100000 : null,
+    VISCOSITY_OIL: row.viscosity_oil !== null ? Math.round(row.viscosity_oil * 100000) / 100000 : null,
+    VISCOSITY_WATER: row.viscosity_water !== null ? Math.round(row.viscosity_water * 100000) / 100000 : null,
+    VISCOSITY_GAS: row.viscosity_gas !== null ? Math.round(row.viscosity_gas * 100000) / 100000 : null,
+    INJECTED_GAS_FORMATION_VOLUME_FACTOR: row.injected_gas_formation_volume_factor !== null ? Math.round(row.injected_gas_formation_volume_factor * 100000) / 100000 : null,
+    INJECTED_WATER_FORMATION_VOLUME_FACTOR: row.injected_water_formation_volume_factor !== null ? Math.round(row.injected_water_formation_volume_factor * 100000) / 100000 : null
+}));
+
+return result;
 $$;
