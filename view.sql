@@ -3,17 +3,17 @@ AS
 WITH Splits AS (
     SELECT
         dv.ID_PATTERN,
-        dv.ID_COMPLETION,
-        dv.Operating_Date AS DATE,
+        dv.COMPLETION_ID AS ID_COMPLETION,
+        dv.PROD_DATE AS DATE,
         -- Apply contribution factor to volumes
-        COALESCE(dv.OIL_VOLUME * sf.FACTOR, dv.OIL_VOLUME, 0) AS OIL_VOLUME,
-        COALESCE(dv.WATER_VOLUME * sf.FACTOR, dv.WATER_VOLUME, 0) AS WATER_VOLUME,
-        COALESCE(dv.GAS_VOLUME * sf.FACTOR, dv.GAS_VOLUME, 0) AS GAS_VOLUME,
-        COALESCE(dv.WATER_INJ_VOLUME * sf.FACTOR, dv.WATER_INJ_VOLUME, 0) AS WATER_INJ_VOLUME,
-        COALESCE(dv.GAS_WELL_GAS_VOLUME * sf.FACTOR, dv.GAS_WELL_GAS_VOLUME, 0) AS GAS_WELL_GAS_VOLUME,
-        COALESCE(dv.GAS_INJ_VOLUME * sf.FACTOR, dv.GAS_INJ_VOLUME, 0) AS GAS_INJ_VOLUME,
+        COALESCE(dv.THEOR_OIL_VOL_STB * sf.FACTOR, dv.THEOR_OIL_VOL_STB, 0) AS OIL_VOLUME,
+        COALESCE(dv.THEOR_WATER_VOL_STB * sf.FACTOR, dv.THEOR_WATER_VOL_STB, 0) AS WATER_VOLUME,
+        COALESCE(dv.THEOR_GAS_VOL_KSCF * 1000 * sf.FACTOR, dv.THEOR_GAS_VOL_KSCF * 1000, 0) AS GAS_VOLUME,
+        COALESCE(dv.THEOR_WATER_INJ_VOL_STB * sf.FACTOR, dv.THEOR_WATER_INJ_VOL_STB, 0) AS WATER_INJ_VOLUME,
+        COALESCE(dv.ALLOC_GAS_VOL_KSCF * 1000 * sf.FACTOR, dv.ALLOC_GAS_VOL_KSCF * 1000, 0) AS GAS_WELL_GAS_VOLUME,
+        COALESCE(dv.THEOR_GAS_INJ_VOL_KSCF * 1000 * sf.FACTOR, dv.THEOR_GAS_INJ_VOL_KSCF * 1000, 0) AS GAS_INJ_VOLUME,
         CASE
-            WHEN dv.Amount_Type = 'Production' THEN COALESCE(dv.FREE_GAS * sf.FACTOR * pvt.GAS_FORMATION_VOLUME_FACTOR, dv.FREE_GAS, 0)
+            WHEN dv.AMOUNT_TYPE = 'Production' THEN COALESCE(dv.FREE_GAS * sf.FACTOR * pvt.GAS_FORMATION_VOLUME_FACTOR, dv.FREE_GAS, 0)
             ELSE 0
         END AS FREE_GAS,
         sf.FACTOR,
@@ -28,11 +28,11 @@ WITH Splits AS (
         pvt.VISCOSITY_GAS,
         pvt.INJECTED_GAS_FORMATION_VOLUME_FACTOR,
         pvt.INJECTED_WATER_FORMATION_VOLUME_FACTOR,
-        dv.Amount_Type
-    FROM RMDE_SAM_ACC.DAILY_VOLUME dv
+        dv.AMOUNT_TYPE
+    FROM TRUSTED_DB.PRODUCTION_VOLUME.PRODUCTION_VOLUMES_DAILY_OILFIELD dv
     -- Match contribution factor
     LEFT JOIN RMDE_SAM_ACC.PATTERN_CONTRIBUTION_FACTOR sf
-        ON dv.ID_COMPLETION = sf.ID_COMPLETION
+        ON dv.COMPLETION_ID = sf.ID_COMPLETION
         AND sf.EFFECT_DATE = (
             SELECT MAX(EFFECT_DATE)
             FROM RMDE_SAM_ACC.PATTERN_CONTRIBUTION_FACTOR sf2
@@ -40,9 +40,9 @@ WITH Splits AS (
               AND sf2.ID_PATTERN IN (
                   SELECT ID_PATTERN
                   FROM RMDE_SAM_ACC.PATTERN_CONTRIBUTION_FACTOR
-                  WHERE ID_COMPLETION = dv.ID_COMPLETION
+                  WHERE ID_COMPLETION = dv.COMPLETION_ID
               )
-              AND dv.Operating_Date >= sf2.EFFECT_DATE
+              AND dv.PROD_DATE >= sf2.EFFECT_DATE
         )
     -- Match pressure
     INNER JOIN (
@@ -57,10 +57,10 @@ WITH Splits AS (
         FROM RMDE_SAM_ACC.PATTERN_PRESSURE
     ) pp
         ON pp.ID_PATTERN = sf.ID_PATTERN
-        AND dv.Operating_Date >= pp.DATE
-        AND dv.Operating_Date < pp.END_DATE
+        AND dv.PROD_DATE >= pp.DATE
+        AND dv.PROD_DATE < pp.END_DATE
     -- Match PVT characteristics
-    LATERAL RMDE_SAM_ACC.InterpolatePVTCompletionTest(pp.PRESSURE, dv.ID_COMPLETION, pp.DATE) pvt
+    LATERAL RMDE_SAM_ACC.InterpolatePVTCompletionTest(pp.PRESSURE, dv.COMPLETION_ID, pp.DATE) pvt
 ),
 Final AS (
     SELECT
