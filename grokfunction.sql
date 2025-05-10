@@ -42,12 +42,12 @@ $$
     // Compute LAST_DAY of vrr_date
     lastDayStmt = snowflake.createStatement({
         sqlText: 'SELECT LAST_DAY(:1)',
-        binds: [VRR_DATE]
+        binds: [vrr_date]
     });
     lastDayResult = lastDayStmt.execute();
     if (!lastDayResult.next()) {
         return [{
-            PRESSURE: PRESSURE,
+            PRESSURE: pressure,
             OIL_FORMATION_VOLUME_FACTOR: null,
             GAS_FORMATION_VOLUME_FACTOR: null,
             WATER_FORMATION_VOLUME_FACTOR: null,
@@ -86,7 +86,7 @@ $$
 
     pvtStmt = snowflake.createStatement({
         sqlText: pvtQuery,
-        binds: [COMPLETION, lastDay]
+        binds: [completion, lastDay]
     });
 
     pvtResults = pvtStmt.execute();
@@ -112,8 +112,8 @@ $$
     // Find exact match
     for (i = 0; i < pvtData.length; i++) {
         row = pvtData[i];
-        if (row.pressure === PRESSURE && 
-            row.id_completion === COMPLETION && 
+        if (row.pressure === pressure && 
+            row.id_completion === completion && 
             new Date(row.test_date) <= new Date(lastDay)) {
             exactMatch = row;
             break;
@@ -123,8 +123,8 @@ $$
     // Find lower bound
     for (i = 0; i < pvtData.length; i++) {
         row = pvtData[i];
-        if (row.pressure < PRESSURE && 
-            row.id_completion === COMPLETION && 
+        if (row.pressure < pressure && 
+            row.id_completion === completion && 
             new Date(row.test_date) <= new Date(lastDay)) {
             if (!lowerBound || row.pressure > lowerBound.pressure || 
                 (row.pressure === lowerBound.pressure && new Date(row.test_date) > new Date(lowerBound.test_date))) {
@@ -136,8 +136,8 @@ $$
     // Find upper bound
     for (i = 0; i < pvtData.length; i++) {
         row = pvtData[i];
-        if (row.pressure > PRESSURE && 
-            row.id_completion === COMPLETION && 
+        if (row.pressure > pressure && 
+            row.id_completion === completion && 
             new Date(row.test_date) <= new Date(lastDay)) {
             if (!upperBound || row.pressure < upperBound.pressure || 
                 (row.pressure === upperBound.pressure && new Date(row.test_date) > new Date(upperBound.test_date))) {
@@ -183,56 +183,56 @@ $$
     // Handle interpolation
     else if (lowerBound && upperBound) {
         row = {
-            pressure: PRESSURE,
+            pressure: pressure,
             oil_formation_volume_factor: calculateInterpolatedValue(
                 lowerBound.pressure, upperBound.pressure,
                 lowerBound.oil_formation_volume_factor, upperBound.oil_formation_volume_factor,
-                PRESSURE
+                pressure
             ),
             gas_formation_volume_factor: calculateInterpolatedValue(
                 lowerBound.pressure, upperBound.pressure,
                 lowerBound.gas_formation_volume_factor, upperBound.gas_formation_volume_factor,
-                PRESSURE
+                pressure
             ),
             water_formation_volume_factor: calculateInterpolatedValue(
                 lowerBound.pressure, upperBound.pressure,
                 lowerBound.water_formation_volume_factor, upperBound.water_formation_volume_factor,
-                PRESSURE
+                pressure
             ),
             solution_gas_oil_ratio: calculateInterpolatedValue(
                 lowerBound.pressure, upperBound.pressure,
                 lowerBound.solution_gas_oil_ratio, upperBound.solution_gas_oil_ratio,
-                PRESSURE
+                pressure
             ),
             volatized_oil_gas_ratio: calculateInterpolatedValue(
                 lowerBound.pressure, upperBound.pressure,
                 lowerBound.volatized_oil_gas_ratio, upperBound.volatized_oil_gas_ratio,
-                PRESSURE
+                pressure
             ),
             viscosity_oil: calculateInterpolatedValue(
                 lowerBound.pressure, upperBound.pressure,
                 lowerBound.viscosity_oil, upperBound.viscosity_oil,
-                PRESSURE
+                pressure
             ),
             viscosity_water: calculateInterpolatedValue(
                 lowerBound.pressure, upperBound.pressure,
                 lowerBound.viscosity_water, upperBound.viscosity_water,
-                PRESSURE
+                pressure
             ),
             viscosity_gas: calculateInterpolatedValue(
                 lowerBound.pressure, upperBound.pressure,
                 lowerBound.viscosity_gas, upperBound.viscosity_gas,
-                PRESSURE
+                pressure
             ),
             injected_gas_formation_volume_factor: calculateInterpolatedValue(
                 lowerBound.pressure, upperBound.pressure,
                 lowerBound.injected_gas_formation_volume_factor, upperBound.injected_gas_formation_volume_factor,
-                PRESSURE
+                pressure
             ),
             injected_water_formation_volume_factor: calculateInterpolatedValue(
                 lowerBound.pressure, upperBound.pressure,
                 lowerBound.injected_water_formation_volume_factor, upperBound.injected_water_formation_volume_factor,
-                PRESSURE
+                pressure
             )
         };
         interpolatedValues.push(row);
@@ -243,7 +243,7 @@ $$
         for (i = 0; i < pvtData.length; i++) {
             row = pvtData[i];
             if (row.pressure > upperBound.pressure && 
-                row.id_completion === COMPLETION && 
+                row.id_completion === completion && 
                 new Date(row.test_date) <= new Date(lastDay)) {
                 matchingRows.push(row);
             }
@@ -265,56 +265,56 @@ $$
         }
         if (secondBound) {
             row = {
-                pressure: PRESSURE,
+                pressure: pressure,
                 oil_formation_volume_factor: calculateExtrapolatedValue(
                     upperBound.pressure, secondBound.pressure,
                     upperBound.oil_formation_volume_factor, secondBound.oil_formation_volume_factor,
-                    PRESSURE
+                    pressure
                 ),
                 gas_formation_volume_factor: calculateExtrapolatedValue(
                     upperBound.pressure, secondBound.pressure,
                     upperBound.gas_formation_volume_factor, secondBound.gas_formation_volume_factor,
-                    PRESSURE
+                    pressure
                 ),
                 water_formation_volume_factor: calculateExtrapolatedValue(
                     upperBound.pressure, secondBound.pressure,
                     upperBound.water_formation_volume_factor, secondBound.water_formation_volume_factor,
-                    PRESSURE
+                    pressure
                 ),
                 solution_gas_oil_ratio: calculateExtrapolatedValue(
                     upperBound.pressure, secondBound.pressure,
                     upperBound.solution_gas_oil_ratio, secondBound.solution_gas_oil_ratio,
-                    PRESSURE
+                    pressure
                 ),
                 volatized_oil_gas_ratio: calculateExtrapolatedValue(
                     upperBound.pressure, secondBound.pressure,
                     upperBound.volatized_oil_gas_ratio, secondBound.volatized_oil_gas_ratio,
-                    PRESSURE
+                    pressure
                 ),
                 viscosity_oil: calculateExtrapolatedValue(
                     upperBound.pressure, secondBound.pressure,
                     upperBound.viscosity_oil, secondBound.viscosity_oil,
-                    PRESSURE
+                    pressure
                 ),
                 viscosity_water: calculateExtrapolatedValue(
                     upperBound.pressure, secondBound.pressure,
                     upperBound.viscosity_water, secondBound.viscosity_water,
-                    PRESSURE
+                    pressure
                 ),
                 viscosity_gas: calculateExtrapolatedValue(
                     upperBound.pressure, secondBound.pressure,
                     upperBound.viscosity_gas, secondBound.viscosity_gas,
-                    PRESSURE
+                    pressure
                 ),
                 injected_gas_formation_volume_factor: calculateExtrapolatedValue(
                     upperBound.pressure, secondBound.pressure,
                     upperBound.injected_gas_formation_volume_factor, secondBound.injected_gas_formation_volume_factor,
-                    PRESSURE
+                    pressure
                 ),
                 injected_water_formation_volume_factor: calculateExtrapolatedValue(
                     upperBound.pressure, secondBound.pressure,
                     upperBound.injected_water_formation_volume_factor, secondBound.injected_water_formation_volume_factor,
-                    PRESSURE
+                    pressure
                 )
             };
             interpolatedValues.push(row);
@@ -324,7 +324,7 @@ $$
     // If no values found, return nulls
     if (interpolatedValues.length === 0) {
         interpolatedValues.push({
-            pressure: PRESSURE,
+            pressure: pressure,
             oil_formation_volume_factor: null,
             gas_formation_volume_factor: null,
             water_formation_volume_factor: null,
