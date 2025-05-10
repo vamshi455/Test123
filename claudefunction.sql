@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION vrr.InterpolatePVTCompletionTest(
+CREATE OR REPLACE FUNCTION RMDE_SAM_ACC.InterpolatePVTCompletionTest(
     pressure FLOAT,
     completion VARCHAR,
     vrr_date DATE
@@ -19,21 +19,6 @@ RETURNS TABLE (
 LANGUAGE JAVASCRIPT
 AS
 $$
-function extrapolate(x1, x2, y1, y2, x) {
-    if (x1 === x2) return y1;
-    return y1 + (x - x1) * (y2 - y1) / (x2 - x1);
-}
-
-// Get the last day of the month for vrr_date
-function lastDayOfMonth(date) {
-    let d = new Date(date);
-    d.setMonth(d.getMonth() + 1);
-    d.setDate(0);
-    return d.toISOString().split('T')[0];
-}
-
-const monthEnd = lastDayOfMonth(VRR_DATE);
-
 // Query to get PVT data with end dates
 const pvtQuery = `
     SELECT
@@ -52,21 +37,21 @@ const pvtQuery = `
         INJECTED_WATER_FORMATION_VOLUME_FACTOR,
         COALESCE(
             (SELECT min(TEST_DATE)
-             FROM vrr.COMPLETION_PVT_CHARACTERISTICS cpvt
-             WHERE cpvt.TEST_DATE > vrr.COMPLETION_PVT_CHARACTERISTICS.TEST_DATE
-               AND cpvt.ID_COMPLETION = vrr.COMPLETION_PVT_CHARACTERISTICS.ID_COMPLETION),
+             FROM RMDE_SAM_ACC.COMPLETION_PVT_CHARACTERISTICS cpvt
+             WHERE cpvt.TEST_DATE > RMDE_SAM_ACC.COMPLETION_PVT_CHARACTERISTICS.TEST_DATE
+               AND cpvt.ID_COMPLETION = RMDE_SAM_ACC.COMPLETION_PVT_CHARACTERISTICS.ID_COMPLETION),
             '9999-12-31'
         ) AS END_DATE
-    FROM vrr.COMPLETION_PVT_CHARACTERISTICS
+    FROM RMDE_SAM_ACC.COMPLETION_PVT_CHARACTERISTICS
     WHERE ID_COMPLETION = ?
-      AND TEST_DATE <= ?
+      AND TEST_DATE <= LAST_DAY(?)
       AND TEST_DATE >= ?
     ORDER BY TEST_DATE DESC
 `;
 
 const pvtStmt = snowflake.createStatement({
     sqlText: pvtQuery,
-    binds: [COMPLETION, monthEnd, PRESSURE]
+    binds: [COMPLETION, VRR_DATE, PRESSURE]
 });
 
 const pvtResults = pvtStmt.execute();
@@ -102,7 +87,7 @@ let interpolatedValues = [];
 const exactMatches = pvtData.filter(row => 
     row.pressure === PRESSURE && 
     row.id_completion === COMPLETION && 
-    row.test_date <= monthEnd
+    new Date(row.test_date) <= new Date(snowflake.execute({sqlText: `SELECT LAST_DAY('${VRR_DATE}')`}).next().getColumnValue(1))
 );
 
 if (exactMatches.length > 0) {
@@ -115,7 +100,7 @@ if (exactMatches.length > 0) {
 const lowerValues = pvtData.filter(row => 
     row.pressure < PRESSURE && 
     row.id_completion === COMPLETION && 
-    row.test_date <= monthEnd
+    new Date(row.test_date) <= new Date(snowflake.execute({sqlText: `SELECT LAST_DAY('${VRR_DATE}')`}).next().getColumnValue(1))
 );
 
 if (lowerValues.length > 0) {
@@ -133,7 +118,7 @@ if (lowerValues.length > 0) {
 const upperValues = pvtData.filter(row => 
     row.pressure > PRESSURE && 
     row.id_completion === COMPLETION && 
-    row.test_date <= monthEnd
+    new Date(row.test_date) <= new Date(snowflake.execute({sqlText: `SELECT LAST_DAY('${VRR_DATE}')`}).next().getColumnValue(1))
 );
 
 if (upperValues.length > 0) {
@@ -147,74 +132,106 @@ if (upperValues.length > 0) {
     upperbound.push(upperValues[0]);
 }
 
+// Get the interpolated/extrapolated values using Snowflake functions through SQL
+const calculateInterpolatedValue = function(x1, x2, y1, y2, x) {
+    // Use Snowflake's built-in interpolate function if both values exist
+    if (x1 !== null && x2 !== null && y1 !== null && y2 !== null) {
+        const stmt = snowflake.createStatement({
+            sqlText: `SELECT RMDE_SAM_ACC.Interpolate(?, ?, ?, ?, ?)`,
+            binds: [x1, x2, y1, y2, x]
+        });
+        const result = stmt.execute();
+        if (result.next()) {
+            return result.getColumnValue(1);
+        }
+    }
+    return null;
+};
+
+// For extrapolation, use the extrapolate function
+const calculateExtrapolatedValue = function(x1, x2, y1, y2, x) {
+    // Use Snowflake's built-in extrapolate function if both values exist
+    if (x1 !== null && x2 !== null && y1 !== null && y2 !== null) {
+        const stmt = snowflake.createStatement({
+            sqlText: `SELECT RMDE_SAM_ACC.Extrapolate(?, ?, ?, ?, ?)`,
+            binds: [x1, x2, y1, y2, x]
+        });
+        const result = stmt.execute();
+        if (result.next()) {
+            return result.getColumnValue(1);
+        }
+    }
+    return null;
+};
+
 // Interpolate with lowerbound and upperbound if available
 if (lowerbound.length === 1 && upperbound.length === 1 && interpolatedValues.length === 0) {
     interpolatedValues.push({
         pressure: PRESSURE,
-        oil_formation_volume_factor: extrapolate(
+        oil_formation_volume_factor: calculateInterpolatedValue(
             lowerbound[0].pressure,
             upperbound[0].pressure,
             lowerbound[0].oil_formation_volume_factor,
             upperbound[0].oil_formation_volume_factor,
             PRESSURE
         ),
-        gas_formation_volume_factor: extrapolate(
+        gas_formation_volume_factor: calculateInterpolatedValue(
             lowerbound[0].pressure,
             upperbound[0].pressure,
             lowerbound[0].gas_formation_volume_factor,
             upperbound[0].gas_formation_volume_factor,
             PRESSURE
         ),
-        water_formation_volume_factor: extrapolate(
+        water_formation_volume_factor: calculateInterpolatedValue(
             lowerbound[0].pressure,
             upperbound[0].pressure,
             lowerbound[0].water_formation_volume_factor,
             upperbound[0].water_formation_volume_factor,
             PRESSURE
         ),
-        solution_gas_oil_ratio: extrapolate(
+        solution_gas_oil_ratio: calculateInterpolatedValue(
             lowerbound[0].pressure,
             upperbound[0].pressure,
             lowerbound[0].solution_gas_oil_ratio,
             upperbound[0].solution_gas_oil_ratio,
             PRESSURE
         ),
-        volatized_oil_gas_ratio: extrapolate(
+        volatized_oil_gas_ratio: calculateInterpolatedValue(
             lowerbound[0].pressure,
             upperbound[0].pressure,
             lowerbound[0].volatized_oil_gas_ratio,
             upperbound[0].volatized_oil_gas_ratio,
             PRESSURE
         ),
-        viscosity_oil: extrapolate(
+        viscosity_oil: calculateInterpolatedValue(
             lowerbound[0].pressure,
             upperbound[0].pressure,
             lowerbound[0].viscosity_oil,
             upperbound[0].viscosity_oil,
             PRESSURE
         ),
-        viscosity_water: extrapolate(
+        viscosity_water: calculateInterpolatedValue(
             lowerbound[0].pressure,
             upperbound[0].pressure,
             lowerbound[0].viscosity_water,
             upperbound[0].viscosity_water,
             PRESSURE
         ),
-        viscosity_gas: extrapolate(
+        viscosity_gas: calculateInterpolatedValue(
             lowerbound[0].pressure,
             upperbound[0].pressure,
             lowerbound[0].viscosity_gas,
             upperbound[0].viscosity_gas,
             PRESSURE
         ),
-        injected_gas_formation_volume_factor: extrapolate(
+        injected_gas_formation_volume_factor: calculateInterpolatedValue(
             lowerbound[0].pressure,
             upperbound[0].pressure,
             lowerbound[0].injected_gas_formation_volume_factor,
             upperbound[0].injected_gas_formation_volume_factor,
             PRESSURE
         ),
-        injected_water_formation_volume_factor: extrapolate(
+        injected_water_formation_volume_factor: calculateInterpolatedValue(
             lowerbound[0].pressure,
             upperbound[0].pressure,
             lowerbound[0].injected_water_formation_volume_factor,
@@ -229,14 +246,14 @@ if (upperbound.length === 1 && lowerbound.length === 0 && exactMatch.length === 
     pvtData.filter(row => 
         row.id_completion === COMPLETION && 
         row.pressure > PRESSURE && 
-        row.test_date <= monthEnd
+        new Date(row.test_date) <= new Date(snowflake.execute({sqlText: `SELECT LAST_DAY('${VRR_DATE}')`}).next().getColumnValue(1))
     ).length > 1) {
     
     // Find secondBound
     const potentialSecondBounds = pvtData.filter(row => 
         row.pressure > upperbound[0].pressure && 
         row.id_completion === COMPLETION && 
-        row.test_date <= monthEnd
+        new Date(row.test_date) <= new Date(snowflake.execute({sqlText: `SELECT LAST_DAY('${VRR_DATE}')`}).next().getColumnValue(1))
     );
     
     if (potentialSecondBounds.length > 0) {
@@ -257,70 +274,70 @@ if (upperbound.length === 1 && lowerbound.length === 0 && exactMatch.length === 
     else if (upperbound.length === 1 && secondBound.length === 1 && exactMatch.length === 0) {
         interpolatedValues.push({
             pressure: PRESSURE,
-            oil_formation_volume_factor: extrapolate(
+            oil_formation_volume_factor: calculateExtrapolatedValue(
                 upperbound[0].pressure,
                 secondBound[0].pressure,
                 upperbound[0].oil_formation_volume_factor,
                 secondBound[0].oil_formation_volume_factor,
                 PRESSURE
             ),
-            gas_formation_volume_factor: extrapolate(
+            gas_formation_volume_factor: calculateExtrapolatedValue(
                 upperbound[0].pressure,
                 secondBound[0].pressure,
                 upperbound[0].gas_formation_volume_factor,
                 secondBound[0].gas_formation_volume_factor,
                 PRESSURE
             ),
-            water_formation_volume_factor: extrapolate(
+            water_formation_volume_factor: calculateExtrapolatedValue(
                 upperbound[0].pressure,
                 secondBound[0].pressure,
                 upperbound[0].water_formation_volume_factor,
                 secondBound[0].water_formation_volume_factor,
                 PRESSURE
             ),
-            solution_gas_oil_ratio: extrapolate(
+            solution_gas_oil_ratio: calculateExtrapolatedValue(
                 upperbound[0].pressure,
                 secondBound[0].pressure,
                 upperbound[0].solution_gas_oil_ratio,
                 secondBound[0].solution_gas_oil_ratio,
                 PRESSURE
             ),
-            volatized_oil_gas_ratio: extrapolate(
+            volatized_oil_gas_ratio: calculateExtrapolatedValue(
                 upperbound[0].pressure,
                 secondBound[0].pressure,
                 upperbound[0].volatized_oil_gas_ratio,
                 secondBound[0].volatized_oil_gas_ratio,
                 PRESSURE
             ),
-            viscosity_oil: extrapolate(
+            viscosity_oil: calculateExtrapolatedValue(
                 upperbound[0].pressure,
                 secondBound[0].pressure,
                 upperbound[0].viscosity_oil,
                 secondBound[0].viscosity_oil,
                 PRESSURE
             ),
-            viscosity_water: extrapolate(
+            viscosity_water: calculateExtrapolatedValue(
                 upperbound[0].pressure,
                 secondBound[0].pressure,
                 upperbound[0].viscosity_water,
                 secondBound[0].viscosity_water,
                 PRESSURE
             ),
-            viscosity_gas: extrapolate(
+            viscosity_gas: calculateExtrapolatedValue(
                 upperbound[0].pressure,
                 secondBound[0].pressure,
                 upperbound[0].viscosity_gas,
                 secondBound[0].viscosity_gas,
                 PRESSURE
             ),
-            injected_gas_formation_volume_factor: extrapolate(
+            injected_gas_formation_volume_factor: calculateExtrapolatedValue(
                 upperbound[0].pressure,
                 secondBound[0].pressure,
                 upperbound[0].injected_gas_formation_volume_factor,
                 secondBound[0].injected_gas_formation_volume_factor,
                 PRESSURE
             ),
-            injected_water_formation_volume_factor: extrapolate(
+            injected_water_formation_volume_factor: calculateExtrapolatedValue(
                 upperbound[0].pressure,
                 secondBound[0].pressure,
                 upperbound[0].injected_water_formation_volume_factor,
@@ -364,4 +381,38 @@ const result = interpolatedValues.map(row => ({
 }));
 
 return result;
+$$;
+
+-- Make sure the Extrapolate function exists - create it if it doesn't
+CREATE OR REPLACE FUNCTION RMDE_SAM_ACC.Extrapolate(
+    x1 FLOAT, 
+    x2 FLOAT, 
+    y1 FLOAT, 
+    y2 FLOAT, 
+    x FLOAT
+)
+RETURNS FLOAT
+AS
+$$
+    CASE 
+        WHEN x1 = x2 THEN y1
+        ELSE y1 + (x - x1) * (y2 - y1) / (x2 - x1)
+    END
+$$;
+
+-- Make sure the Interpolate function exists - create it if it doesn't
+CREATE OR REPLACE FUNCTION RMDE_SAM_ACC.Interpolate(
+    x1 FLOAT, 
+    x2 FLOAT, 
+    y1 FLOAT, 
+    y2 FLOAT, 
+    x FLOAT
+)
+RETURNS FLOAT
+AS
+$$
+    CASE 
+        WHEN x1 = x2 THEN y1
+        ELSE y1 + (x - x1) * (y2 - y1) / (x2 - x1)
+    END
 $$;
