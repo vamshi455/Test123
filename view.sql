@@ -1,12 +1,6 @@
 CREATE OR REPLACE VIEW RMDE_SAM_ACC.PATTERN_VRR_VIEW
 AS
-WITH ValidCompletions AS (
-    SELECT DISTINCT
-        ID_COMPLETION,
-        ID_PATTERN
-    FROM RMDE_SAM_ACC.PATTERN_CONTRIBUTION_FACTOR
-),
-LatestContributionFactor AS (
+WITH LatestContributionFactor AS (
     SELECT
         sf.ID_PATTERN,
         sf.ID_COMPLETION,
@@ -20,9 +14,9 @@ LatestContributionFactor AS (
     JOIN TRUSTED_DB.PRODUCTION_VOLUME.PRODUCTION_VOLUMES_DAILY_OILFIELD dv
         ON dv.COMPLETION_ID = sf.ID_COMPLETION
         AND dv.PROD_DATE >= sf.EFFECT_DATE
-    JOIN ValidCompletions vc
-        ON vc.ID_COMPLETION = sf.ID_COMPLETION
-        AND vc.ID_PATTERN = sf.ID_PATTERN
+    JOIN RMDE_SAM_ACC.PATTERN_CONTRIBUTION_FACTOR sf2
+        ON sf2.ID_COMPLETION = dv.COMPLETION_ID
+        AND sf.ID_PATTERN = sf2.ID_PATTERN
 ),
 Splits AS (
     SELECT
@@ -56,7 +50,6 @@ Splits AS (
     -- Match contribution factor
     LEFT JOIN LatestContributionFactor sf
         ON dv.COMPLETION_ID = sf.ID_COMPLETION
-        AND dv.ID_PATTERN = sf.ID_PATTERN
         AND sf.rn = 1
     -- Match pressure
     INNER JOIN (
