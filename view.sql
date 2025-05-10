@@ -1,6 +1,12 @@
 CREATE OR REPLACE VIEW RMDE_SAM_ACC.PATTERN_VRR_VIEW
 AS
-WITH LatestContributionFactor AS (
+WITH ValidCompletions AS (
+    SELECT DISTINCT
+        ID_COMPLETION,
+        ID_PATTERN
+    FROM RMDE_SAM_ACC.PATTERN_CONTRIBUTION_FACTOR
+),
+LatestContributionFactor AS (
     SELECT
         sf.ID_PATTERN,
         sf.ID_COMPLETION,
@@ -14,15 +20,13 @@ WITH LatestContributionFactor AS (
     JOIN TRUSTED_DB.PRODUCTION_VOLUME.PRODUCTION_VOLUMES_DAILY_OILFIELD dv
         ON dv.COMPLETION_ID = sf.ID_COMPLETION
         AND dv.PROD_DATE >= sf.EFFECT_DATE
-    WHERE sf.ID_PATTERN IN (
-        SELECT ID_PATTERN
-        FROM RMDE_SAM_ACC.PATTERN_CONTRIBUTION_FACTOR
-        WHERE ID_COMPLETION = dv.COMPLETION_ID
-    )
+    JOIN ValidCompletions vc
+        ON vc.ID_COMPLETION = sf.ID_COMPLETION
+        AND vc.ID_PATTERN = sf.ID_PATTERN
 ),
 Splits AS (
     SELECT
-        dv.ID_PATTERN,
+        sf.ID_PATTERN,
         dv.COMPLETION_ID AS ID_COMPLETION,
         dv.PROD_DATE AS DATE,
         -- Apply contribution factor to volumes
@@ -66,7 +70,7 @@ Splits AS (
             ) AS END_DATE
         FROM RMDE_SAM_ACC.PATTERN_PRESSURE
     ) pp
-        ON pp.ID_PATTERN = dv.ID_PATTERN
+        ON pp.ID_PATTERN = sf.ID_PATTERN
         AND dv.PROD_DATE >= pp.DATE
         AND dv.PROD_DATE < pp.END_DATE
     -- Match PVT characteristics
