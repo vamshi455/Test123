@@ -1,0 +1,426 @@
+CREATE OR REPLACE FUNCTION vrr.InterpolatePVTCompletionTest(
+    pressure FLOAT,
+    completion VARCHAR(32),
+    vrr_date DATE
+)
+RETURNS TABLE (
+    PRESSURE FLOAT,
+    OIL_FORMATION_VOLUME_FACTOR FLOAT,
+    GAS_FORMATION_VOLUME_FACTOR FLOAT,
+    WATER_FORMATION_VOLUME_FACTOR FLOAT,
+    SOLUTION_GAS_OIL_RATIO FLOAT,
+    VOLATIZED_OIL_GAS_RATIO FLOAT,
+    VISCOSITY_OIL FLOAT,
+    VISCOSITY_WATER FLOAT,
+    VISCOSITY_GAS FLOAT,
+    INJECTED_GAS_FORMATION_VOLUME_FACTOR FLOAT,
+    INJECTED_WATER_FORMATION_VOLUME_FACTOR FLOAT
+)
+AS
+$$
+-- Helper function to perform extrapolation (equivalent to vrr.Extrapolate in SQL Server)
+CREATE OR REPLACE FUNCTION vrr.Extrapolate(x1 FLOAT, x2 FLOAT, y1 FLOAT, y2 FLOAT)
+RETURNS FLOAT
+AS
+$$
+  CASE 
+    WHEN x1 = x2 THEN y1
+    ELSE y1 + (pressure - x1) * (y2 - y1) / (x2 - x1)
+  END
+$$;
+
+-- Create temporary tables (Snowflake uses temporary tables instead of table variables)
+CREATE TEMPORARY TABLE ExactMatch (
+    PRESSURE FLOAT,
+    OIL_FORMATION_VOLUME_FACTOR FLOAT,
+    GAS_FORMATION_VOLUME_FACTOR FLOAT,
+    WATER_FORMATION_VOLUME_FACTOR FLOAT,
+    SOLUTION_GAS_OIL_RATIO FLOAT,
+    VOLATIZED_OIL_GAS_RATIO FLOAT,
+    VISCOSITY_OIL FLOAT,
+    VISCOSITY_WATER FLOAT,
+    VISCOSITY_GAS FLOAT,
+    INJECTED_GAS_FORMATION_VOLUME_FACTOR FLOAT,
+    INJECTED_WATER_FORMATION_VOLUME_FACTOR FLOAT
+);
+
+CREATE TEMPORARY TABLE lowerbound (
+    PRESSURE FLOAT,
+    OIL_FORMATION_VOLUME_FACTOR FLOAT,
+    GAS_FORMATION_VOLUME_FACTOR FLOAT,
+    WATER_FORMATION_VOLUME_FACTOR FLOAT,
+    SOLUTION_GAS_OIL_RATIO FLOAT,
+    VOLATIZED_OIL_GAS_RATIO FLOAT,
+    VISCOSITY_OIL FLOAT,
+    VISCOSITY_WATER FLOAT,
+    VISCOSITY_GAS FLOAT,
+    INJECTED_GAS_FORMATION_VOLUME_FACTOR FLOAT,
+    INJECTED_WATER_FORMATION_VOLUME_FACTOR FLOAT
+);
+
+CREATE TEMPORARY TABLE upperbound (
+    PRESSURE FLOAT,
+    OIL_FORMATION_VOLUME_FACTOR FLOAT,
+    GAS_FORMATION_VOLUME_FACTOR FLOAT,
+    WATER_FORMATION_VOLUME_FACTOR FLOAT,
+    SOLUTION_GAS_OIL_RATIO FLOAT,
+    VOLATIZED_OIL_GAS_RATIO FLOAT,
+    VISCOSITY_OIL FLOAT,
+    VISCOSITY_WATER FLOAT,
+    VISCOSITY_GAS FLOAT,
+    INJECTED_GAS_FORMATION_VOLUME_FACTOR FLOAT,
+    INJECTED_WATER_FORMATION_VOLUME_FACTOR FLOAT
+);
+
+CREATE TEMPORARY TABLE secondBOUND (
+    PRESSURE FLOAT,
+    OIL_FORMATION_VOLUME_FACTOR FLOAT,
+    GAS_FORMATION_VOLUME_FACTOR FLOAT,
+    WATER_FORMATION_VOLUME_FACTOR FLOAT,
+    SOLUTION_GAS_OIL_RATIO FLOAT,
+    VOLATIZED_OIL_GAS_RATIO FLOAT,
+    VISCOSITY_OIL FLOAT,
+    VISCOSITY_WATER FLOAT,
+    VISCOSITY_GAS FLOAT,
+    INJECTED_GAS_FORMATION_VOLUME_FACTOR FLOAT,
+    INJECTED_WATER_FORMATION_VOLUME_FACTOR FLOAT
+);
+
+CREATE TEMPORARY TABLE interpolatedValues (
+    PRESSURE FLOAT,
+    OIL_FORMATION_VOLUME_FACTOR FLOAT,
+    GAS_FORMATION_VOLUME_FACTOR FLOAT,
+    WATER_FORMATION_VOLUME_FACTOR FLOAT,
+    SOLUTION_GAS_OIL_RATIO FLOAT,
+    VOLATIZED_OIL_GAS_RATIO FLOAT,
+    VISCOSITY_OIL FLOAT,
+    VISCOSITY_WATER FLOAT,
+    VISCOSITY_GAS FLOAT,
+    INJECTED_GAS_FORMATION_VOLUME_FACTOR FLOAT,
+    INJECTED_WATER_FORMATION_VOLUME_FACTOR FLOAT
+);
+
+CREATE TEMPORARY TABLE PVTwithEndDate (
+    ID_COMPLETION VARCHAR(32),
+    TEST_DATE DATE,
+    PRESSURE FLOAT,
+    OIL_FORMATION_VOLUME_FACTOR FLOAT,
+    GAS_FORMATION_VOLUME_FACTOR FLOAT,
+    WATER_FORMATION_VOLUME_FACTOR FLOAT,
+    SOLUTION_GAS_OIL_RATIO FLOAT,
+    VOLATIZED_OIL_GAS_RATIO FLOAT,
+    VISCOSITY_OIL FLOAT,
+    VISCOSITY_WATER FLOAT,
+    VISCOSITY_GAS FLOAT,
+    INJECTED_GAS_FORMATION_VOLUME_FACTOR FLOAT,
+    INJECTED_WATER_FORMATION_VOLUME_FACTOR FLOAT,
+    END_DATE DATE
+);
+
+-- Insert data into PVTwithEndDate (using LAST_DAY instead of EOMONTH)
+INSERT INTO PVTwithEndDate
+SELECT
+    ID_COMPLETION,
+    TEST_DATE,
+    PRESSURE,
+    OIL_FORMATION_VOLUME_FACTOR,
+    GAS_FORMATION_VOLUME_FACTOR,
+    WATER_FORMATION_VOLUME_FACTOR,
+    SOLUTION_GAS_OIL_RATIO,
+    VOLATIZED_OIL_GAS_RATIO,
+    VISCOSITY_OIL,
+    VISCOSITY_WATER,
+    VISCOSITY_GAS,
+    INJECTED_GAS_FORMATION_VOLUME_FACTOR,
+    INJECTED_WATER_FORMATION_VOLUME_FACTOR,
+    COALESCE(
+        (SELECT min(TEST_DATE)
+         FROM vrr.COMPLETION_PVT_CHARACTERISTICS cpvt
+         WHERE cpvt.TEST_DATE > vrr.COMPLETION_PVT_CHARACTERISTICS.TEST_DATE
+           AND cpvt.ID_COMPLETION = vrr.COMPLETION_PVT_CHARACTERISTICS.ID_COMPLETION),
+        '9999-12-31'::DATE
+    ) AS END_DATE
+FROM vrr.COMPLETION_PVT_CHARACTERISTICS
+WHERE ID_COMPLETION = completion
+  AND TEST_DATE <= LAST_DAY(vrr_date)
+  AND TEST_DATE >= pressure
+ORDER BY TEST_DATE DESC;
+
+-- Exact match
+INSERT INTO ExactMatch
+SELECT TOP 1
+    PRESSURE,
+    OIL_FORMATION_VOLUME_FACTOR,
+    GAS_FORMATION_VOLUME_FACTOR,
+    WATER_FORMATION_VOLUME_FACTOR,
+    SOLUTION_GAS_OIL_RATIO,
+    VOLATIZED_OIL_GAS_RATIO,
+    VISCOSITY_OIL,
+    VISCOSITY_WATER,
+    VISCOSITY_GAS,
+    INJECTED_GAS_FORMATION_VOLUME_FACTOR,
+    INJECTED_WATER_FORMATION_VOLUME_FACTOR
+FROM PVTwithEndDate
+WHERE TEST_DATE = (
+    SELECT max(TEST_DATE)
+    FROM PVTwithEndDate p
+    WHERE p.PRESSURE = pressure
+      AND p.ID_COMPLETION = completion
+      AND p.TEST_DATE <= LAST_DAY(vrr_date)
+)
+  AND PRESSURE = pressure
+ORDER BY TEST_DATE DESC;
+
+-- Lowerbound
+INSERT INTO lowerbound
+SELECT TOP 1
+    PRESSURE,
+    OIL_FORMATION_VOLUME_FACTOR,
+    GAS_FORMATION_VOLUME_FACTOR,
+    WATER_FORMATION_VOLUME_FACTOR,
+    SOLUTION_GAS_OIL_RATIO,
+    VOLATIZED_OIL_GAS_RATIO,
+    VISCOSITY_OIL,
+    VISCOSITY_WATER,
+    VISCOSITY_GAS,
+    INJECTED_GAS_FORMATION_VOLUME_FACTOR,
+    INJECTED_WATER_FORMATION_VOLUME_FACTOR
+FROM PVTwithEndDate
+WHERE PRESSURE < pressure
+  AND ID_COMPLETION = completion
+  AND TEST_DATE <= LAST_DAY(vrr_date)
+ORDER BY PRESSURE DESC, TEST_DATE DESC;
+
+-- Upperbound
+INSERT INTO upperbound
+SELECT TOP 1
+    PRESSURE,
+    OIL_FORMATION_VOLUME_FACTOR,
+    GAS_FORMATION_VOLUME_FACTOR,
+    WATER_FORMATION_VOLUME_FACTOR,
+    SOLUTION_GAS_OIL_RATIO,
+    VOLATIZED_OIL_GAS_RATIO,
+    VISCOSITY_OIL,
+    VISCOSITY_WATER,
+    VISCOSITY_GAS,
+    INJECTED_GAS_FORMATION_VOLUME_FACTOR,
+    INJECTED_WATER_FORMATION_VOLUME_FACTOR
+FROM PVTwithEndDate
+WHERE PRESSURE > pressure
+  AND ID_COMPLETION = completion
+  AND TEST_DATE <= LAST_DAY(vrr_date)
+ORDER BY PRESSURE ASC, TEST_DATE DESC;
+
+-- If lowerbound and upperbound exist but interpolatedValues is empty
+IF ((SELECT count(*) FROM lowerbound) = 1 AND (SELECT count(*) FROM upperbound) = 1 AND (SELECT count(*) FROM interpolatedValues) = 0) THEN
+    INSERT INTO interpolatedValues
+    SELECT
+        pressure,
+        vrr.Extrapolate(
+            (SELECT PRESSURE FROM lowerbound),
+            (SELECT PRESSURE FROM upperbound),
+            (SELECT OIL_FORMATION_VOLUME_FACTOR FROM lowerbound),
+            (SELECT OIL_FORMATION_VOLUME_FACTOR FROM upperbound)
+        ),
+        vrr.Extrapolate(
+            (SELECT PRESSURE FROM lowerbound),
+            (SELECT PRESSURE FROM upperbound),
+            (SELECT GAS_FORMATION_VOLUME_FACTOR FROM lowerbound),
+            (SELECT GAS_FORMATION_VOLUME_FACTOR FROM upperbound)
+        ),
+        vrr.Extrapolate(
+            (SELECT PRESSURE FROM lowerbound),
+            (SELECT PRESSURE FROM upperbound),
+            (SELECT WATER_FORMATION_VOLUME_FACTOR FROM lowerbound),
+            (SELECT WATER_FORMATION_VOLUME_FACTOR FROM upperbound)
+        ),
+        vrr.Extrapolate(
+            (SELECT PRESSURE FROM lowerbound),
+            (SELECT PRESSURE FROM upperbound),
+            (SELECT SOLUTION_GAS_OIL_RATIO FROM lowerbound),
+            (SELECT SOLUTION_GAS_OIL_RATIO FROM upperbound)
+        ),
+        vrr.Extrapolate(
+            (SELECT PRESSURE FROM lowerbound),
+            (SELECT PRESSURE FROM upperbound),
+            (SELECT VOLATIZED_OIL_GAS_RATIO FROM lowerbound),
+            (SELECT VOLATIZED_OIL_GAS_RATIO FROM upperbound)
+        ),
+        vrr.Extrapolate(
+            (SELECT PRESSURE FROM lowerbound),
+            (SELECT PRESSURE FROM upperbound),
+            (SELECT VISCOSITY_OIL FROM lowerbound),
+            (SELECT VISCOSITY_OIL FROM upperbound)
+        ),
+        vrr.Extrapolate(
+            (SELECT PRESSURE FROM lowerbound),
+            (SELECT PRESSURE FROM upperbound),
+            (SELECT VISCOSITY_WATER FROM lowerbound),
+            (SELECT VISCOSITY_WATER FROM upperbound)
+        ),
+        vrr.Extrapolate(
+            (SELECT PRESSURE FROM lowerbound),
+            (SELECT PRESSURE FROM upperbound),
+            (SELECT VISCOSITY_GAS FROM lowerbound),
+            (SELECT VISCOSITY_GAS FROM upperbound)
+        ),
+        vrr.Extrapolate(
+            (SELECT PRESSURE FROM lowerbound),
+            (SELECT PRESSURE FROM upperbound),
+            (SELECT INJECTED_GAS_FORMATION_VOLUME_FACTOR FROM lowerbound),
+            (SELECT INJECTED_GAS_FORMATION_VOLUME_FACTOR FROM upperbound)
+        ),
+        vrr.Extrapolate(
+            (SELECT PRESSURE FROM lowerbound),
+            (SELECT PRESSURE FROM upperbound),
+            (SELECT INJECTED_WATER_FORMATION_VOLUME_FACTOR FROM lowerbound),
+            (SELECT INJECTED_WATER_FORMATION_VOLUME_FACTOR FROM upperbound)
+        );
+END IF;
+
+-- If there is an upperbound but no lowerbound
+IF ((SELECT count(*) FROM upperbound) = 1 AND (SELECT count(*) FROM lowerbound) = 0 AND 
+    (SELECT count(*) FROM ExactMatch) = 0 AND 
+    (SELECT count(*) FROM PVTwithEndDate WHERE ID_COMPLETION = completion AND PRESSURE > pressure AND TEST_DATE <= LAST_DAY(vrr_date)) > 1) THEN
+    
+    INSERT INTO secondBOUND
+    SELECT TOP 1
+        PRESSURE,
+        OIL_FORMATION_VOLUME_FACTOR,
+        GAS_FORMATION_VOLUME_FACTOR,
+        WATER_FORMATION_VOLUME_FACTOR,
+        SOLUTION_GAS_OIL_RATIO,
+        VOLATIZED_OIL_GAS_RATIO,
+        VISCOSITY_OIL,
+        VISCOSITY_WATER,
+        VISCOSITY_GAS,
+        INJECTED_GAS_FORMATION_VOLUME_FACTOR,
+        INJECTED_WATER_FORMATION_VOLUME_FACTOR
+    FROM PVTwithEndDate pvt
+    WHERE pvt.PRESSURE = (
+        SELECT min(pressure)
+        FROM PVTwithEndDate p
+        WHERE p.PRESSURE > (SELECT PRESSURE FROM upperbound)
+          AND p.ID_COMPLETION = completion
+          AND p.TEST_DATE <= LAST_DAY(vrr_date)
+    )
+    ORDER BY TEST_DATE DESC;
+
+    -- If there is an exact match
+    IF ((SELECT count(*) FROM ExactMatch) = 1) THEN
+        INSERT INTO interpolatedValues
+        SELECT
+            PRESSURE,
+            OIL_FORMATION_VOLUME_FACTOR,
+            GAS_FORMATION_VOLUME_FACTOR,
+            WATER_FORMATION_VOLUME_FACTOR,
+            SOLUTION_GAS_OIL_RATIO,
+            VOLATIZED_OIL_GAS_RATIO,
+            VISCOSITY_OIL,
+            VISCOSITY_WATER,
+            VISCOSITY_GAS,
+            INJECTED_GAS_FORMATION_VOLUME_FACTOR,
+            INJECTED_WATER_FORMATION_VOLUME_FACTOR
+        FROM ExactMatch;
+    END IF;
+
+    -- If there is no exact match but we have upperbound and secondBOUND
+    IF ((SELECT count(*) FROM upperbound) = 1 AND (SELECT count(*) FROM secondBOUND) = 1 AND (SELECT count(*) FROM ExactMatch) = 0) THEN
+        INSERT INTO interpolatedValues
+        SELECT
+            pressure,
+            vrr.Extrapolate(
+                (SELECT PRESSURE FROM upperbound),
+                (SELECT PRESSURE FROM secondBOUND),
+                (SELECT OIL_FORMATION_VOLUME_FACTOR FROM upperbound),
+                (SELECT OIL_FORMATION_VOLUME_FACTOR FROM secondBOUND)
+            ),
+            vrr.Extrapolate(
+                (SELECT PRESSURE FROM upperbound),
+                (SELECT PRESSURE FROM secondBOUND),
+                (SELECT GAS_FORMATION_VOLUME_FACTOR FROM upperbound),
+                (SELECT GAS_FORMATION_VOLUME_FACTOR FROM secondBOUND)
+            ),
+            vrr.Extrapolate(
+                (SELECT PRESSURE FROM upperbound),
+                (SELECT PRESSURE FROM secondBOUND),
+                (SELECT WATER_FORMATION_VOLUME_FACTOR FROM upperbound),
+                (SELECT WATER_FORMATION_VOLUME_FACTOR FROM secondBOUND)
+            ),
+            vrr.Extrapolate(
+                (SELECT PRESSURE FROM upperbound),
+                (SELECT PRESSURE FROM secondBOUND),
+                (SELECT SOLUTION_GAS_OIL_RATIO FROM upperbound),
+                (SELECT SOLUTION_GAS_OIL_RATIO FROM secondBOUND)
+            ),
+            vrr.Extrapolate(
+                (SELECT PRESSURE FROM upperbound),
+                (SELECT PRESSURE FROM secondBOUND),
+                (SELECT VOLATIZED_OIL_GAS_RATIO FROM upperbound),
+                (SELECT VOLATIZED_OIL_GAS_RATIO FROM secondBOUND)
+            ),
+            vrr.Extrapolate(
+                (SELECT PRESSURE FROM upperbound),
+                (SELECT PRESSURE FROM secondBOUND),
+                (SELECT VISCOSITY_OIL FROM upperbound),
+                (SELECT VISCOSITY_OIL FROM secondBOUND)
+            ),
+            vrr.Extrapolate(
+                (SELECT PRESSURE FROM upperbound),
+                (SELECT PRESSURE FROM secondBOUND),
+                (SELECT VISCOSITY_WATER FROM upperbound),
+                (SELECT VISCOSITY_WATER FROM secondBOUND)
+            ),
+            vrr.Extrapolate(
+                (SELECT PRESSURE FROM upperbound),
+                (SELECT PRESSURE FROM secondBOUND),
+                (SELECT VISCOSITY_GAS FROM upperbound),
+                (SELECT VISCOSITY_GAS FROM secondBOUND)
+            ),
+            vrr.Extrapolate(
+                (SELECT PRESSURE FROM upperbound),
+                (SELECT PRESSURE FROM secondBOUND),
+                (SELECT INJECTED_GAS_FORMATION_VOLUME_FACTOR FROM upperbound),
+                (SELECT INJECTED_GAS_FORMATION_VOLUME_FACTOR FROM secondBOUND)
+            ),
+            vrr.Extrapolate(
+                (SELECT PRESSURE FROM upperbound),
+                (SELECT PRESSURE FROM secondBOUND),
+                (SELECT INJECTED_WATER_FORMATION_VOLUME_FACTOR FROM upperbound),
+                (SELECT INJECTED_WATER_FORMATION_VOLUME_FACTOR FROM secondBOUND)
+            );
+    END IF;
+
+    -- No active values found
+    IF ((SELECT count(*) FROM interpolatedValues) = 0) THEN
+        INSERT INTO interpolatedValues
+        SELECT
+            pressure,
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            NULL;
+    END IF;
+END IF;
+
+-- Return the rounded values
+SELECT
+    ROUND(PRESSURE, 5),
+    ROUND(OIL_FORMATION_VOLUME_FACTOR, 5),
+    ROUND(GAS_FORMATION_VOLUME_FACTOR, 5),
+    ROUND(WATER_FORMATION_VOLUME_FACTOR, 5),
+    ROUND(SOLUTION_GAS_OIL_RATIO, 5),
+    ROUND(VOLATIZED_OIL_GAS_RATIO, 5),
+    ROUND(VISCOSITY_OIL, 5),
+    ROUND(VISCOSITY_WATER, 5),
+    ROUND(VISCOSITY_GAS, 5),
+    ROUND(INJECTED_GAS_FORMATION_VOLUME_FACTOR, 5),
+    ROUND(INJECTED_WATER_FORMATION_VOLUME_FACTOR, 5)
+FROM interpolatedValues;
+$$;
