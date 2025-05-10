@@ -20,7 +20,7 @@ LANGUAGE JAVASCRIPT
 AS
 $$
 // Query to get PVT data with end dates
-const pvtQuery = `
+var pvtQuery = `
     SELECT
         ID_COMPLETION,
         TEST_DATE,
@@ -49,13 +49,13 @@ const pvtQuery = `
     ORDER BY TEST_DATE DESC
 `;
 
-const pvtStmt = snowflake.createStatement({
+var pvtStmt = snowflake.createStatement({
     sqlText: pvtQuery,
     binds: [COMPLETION, VRR_DATE, PRESSURE]
 });
 
-const pvtResults = pvtStmt.execute();
-const pvtData = [];
+var pvtResults = pvtStmt.execute();
+var pvtData = [];
 
 while (pvtResults.next()) {
     pvtData.push({
@@ -77,35 +77,54 @@ while (pvtResults.next()) {
 }
 
 // Table variables equivalent
-let exactMatch = [];
-let lowerbound = [];
-let upperbound = [];
-let secondBound = [];
-let interpolatedValues = [];
+var exactMatch = [];
+var lowerbound = [];
+var upperbound = [];
+var secondBound = [];
+var interpolatedValues = [];
+
+// Get last day of month once
+var lastDayStmt = snowflake.createStatement({
+    sqlText: "SELECT LAST_DAY(?)",
+    binds: [VRR_DATE]
+});
+var lastDayResult = lastDayStmt.execute();
+lastDayResult.next();
+var lastDayOfMonth = lastDayResult.getColumnValue(1);
 
 // Find exact match
-const exactMatches = pvtData.filter(row => 
-    row.pressure === PRESSURE && 
-    row.id_completion === COMPLETION && 
-    new Date(row.test_date) <= new Date(snowflake.execute({sqlText: `SELECT LAST_DAY('${VRR_DATE}')`}).next().getColumnValue(1))
-);
+var exactMatches = [];
+for (var i = 0; i < pvtData.length; i++) {
+    var row = pvtData[i];
+    if (row.pressure === PRESSURE && 
+        row.id_completion === COMPLETION && 
+        new Date(row.test_date) <= new Date(lastDayOfMonth)) {
+        exactMatches.push(row);
+    }
+}
 
 if (exactMatches.length > 0) {
-    // Sort by test_date desc and take the first one
-    exactMatches.sort((a, b) => new Date(b.test_date) - new Date(a.test_date));
+    // Sort by test_date desc
+    exactMatches.sort(function(a, b) {
+        return new Date(b.test_date) - new Date(a.test_date);
+    });
     exactMatch.push(exactMatches[0]);
 }
 
 // Find lowerbound
-const lowerValues = pvtData.filter(row => 
-    row.pressure < PRESSURE && 
-    row.id_completion === COMPLETION && 
-    new Date(row.test_date) <= new Date(snowflake.execute({sqlText: `SELECT LAST_DAY('${VRR_DATE}')`}).next().getColumnValue(1))
-);
+var lowerValues = [];
+for (var i = 0; i < pvtData.length; i++) {
+    var row = pvtData[i];
+    if (row.pressure < PRESSURE && 
+        row.id_completion === COMPLETION && 
+        new Date(row.test_date) <= new Date(lastDayOfMonth)) {
+        lowerValues.push(row);
+    }
+}
 
 if (lowerValues.length > 0) {
     // Sort by pressure desc, then test_date desc
-    lowerValues.sort((a, b) => {
+    lowerValues.sort(function(a, b) {
         if (b.pressure !== a.pressure) {
             return b.pressure - a.pressure;
         }
@@ -115,15 +134,19 @@ if (lowerValues.length > 0) {
 }
 
 // Find upperbound
-const upperValues = pvtData.filter(row => 
-    row.pressure > PRESSURE && 
-    row.id_completion === COMPLETION && 
-    new Date(row.test_date) <= new Date(snowflake.execute({sqlText: `SELECT LAST_DAY('${VRR_DATE}')`}).next().getColumnValue(1))
-);
+var upperValues = [];
+for (var i = 0; i < pvtData.length; i++) {
+    var row = pvtData[i];
+    if (row.pressure > PRESSURE && 
+        row.id_completion === COMPLETION && 
+        new Date(row.test_date) <= new Date(lastDayOfMonth)) {
+        upperValues.push(row);
+    }
+}
 
 if (upperValues.length > 0) {
     // Sort by pressure asc, then test_date desc
-    upperValues.sort((a, b) => {
+    upperValues.sort(function(a, b) {
         if (a.pressure !== b.pressure) {
             return a.pressure - b.pressure;
         }
@@ -132,37 +155,37 @@ if (upperValues.length > 0) {
     upperbound.push(upperValues[0]);
 }
 
-// Get the interpolated/extrapolated values using Snowflake functions through SQL
-const calculateInterpolatedValue = function(x1, x2, y1, y2, x) {
+// Function to call the Interpolate database function
+function calculateInterpolatedValue(x1, x2, y1, y2, x) {
     // Use Snowflake's built-in interpolate function if both values exist
     if (x1 !== null && x2 !== null && y1 !== null && y2 !== null) {
-        const stmt = snowflake.createStatement({
-            sqlText: `SELECT RMDE_SAM_ACC.Interpolate(?, ?, ?, ?, ?)`,
+        var stmt = snowflake.createStatement({
+            sqlText: "SELECT RMDE_SAM_ACC.Interpolate(?, ?, ?, ?, ?)",
             binds: [x1, x2, y1, y2, x]
         });
-        const result = stmt.execute();
+        var result = stmt.execute();
         if (result.next()) {
             return result.getColumnValue(1);
         }
     }
     return null;
-};
+}
 
-// For extrapolation, use the extrapolate function
-const calculateExtrapolatedValue = function(x1, x2, y1, y2, x) {
+// Function to call the Extrapolate database function
+function calculateExtrapolatedValue(x1, x2, y1, y2, x) {
     // Use Snowflake's built-in extrapolate function if both values exist
     if (x1 !== null && x2 !== null && y1 !== null && y2 !== null) {
-        const stmt = snowflake.createStatement({
-            sqlText: `SELECT RMDE_SAM_ACC.Extrapolate(?, ?, ?, ?, ?)`,
+        var stmt = snowflake.createStatement({
+            sqlText: "SELECT RMDE_SAM_ACC.Extrapolate(?, ?, ?, ?, ?)",
             binds: [x1, x2, y1, y2, x]
         });
-        const result = stmt.execute();
+        var result = stmt.execute();
         if (result.next()) {
             return result.getColumnValue(1);
         }
     }
     return null;
-};
+}
 
 // Interpolate with lowerbound and upperbound if available
 if (lowerbound.length === 1 && upperbound.length === 1 && interpolatedValues.length === 0) {
@@ -242,28 +265,53 @@ if (lowerbound.length === 1 && upperbound.length === 1 && interpolatedValues.len
 }
 
 // Handle the case where there's an upperbound but no lowerbound
-if (upperbound.length === 1 && lowerbound.length === 0 && exactMatch.length === 0 && 
-    pvtData.filter(row => 
-        row.id_completion === COMPLETION && 
+var countMoreThanUpperbound = 0;
+for (var i = 0; i < pvtData.length; i++) {
+    var row = pvtData[i];
+    if (row.id_completion === COMPLETION && 
         row.pressure > PRESSURE && 
-        new Date(row.test_date) <= new Date(snowflake.execute({sqlText: `SELECT LAST_DAY('${VRR_DATE}')`}).next().getColumnValue(1))
-    ).length > 1) {
+        new Date(row.test_date) <= new Date(lastDayOfMonth)) {
+        countMoreThanUpperbound++;
+    }
+}
+
+if (upperbound.length === 1 && lowerbound.length === 0 && exactMatch.length === 0 && countMoreThanUpperbound > 1) {
     
     // Find secondBound
-    const potentialSecondBounds = pvtData.filter(row => 
-        row.pressure > upperbound[0].pressure && 
-        row.id_completion === COMPLETION && 
-        new Date(row.test_date) <= new Date(snowflake.execute({sqlText: `SELECT LAST_DAY('${VRR_DATE}')`}).next().getColumnValue(1))
-    );
+    var potentialSecondBounds = [];
+    for (var i = 0; i < pvtData.length; i++) {
+        var row = pvtData[i];
+        if (row.pressure > upperbound[0].pressure && 
+            row.id_completion === COMPLETION && 
+            new Date(row.test_date) <= new Date(lastDayOfMonth)) {
+            potentialSecondBounds.push(row);
+        }
+    }
     
     if (potentialSecondBounds.length > 0) {
         // Find the minimum pressure greater than upperbound
-        const minPressure = Math.min(...potentialSecondBounds.map(row => row.pressure));
-        const matchingRows = potentialSecondBounds.filter(row => row.pressure === minPressure);
+        var minPressure = Number.MAX_VALUE;
+        for (var i = 0; i < potentialSecondBounds.length; i++) {
+            if (potentialSecondBounds[i].pressure < minPressure) {
+                minPressure = potentialSecondBounds[i].pressure;
+            }
+        }
+        
+        var matchingRows = [];
+        for (var i = 0; i < potentialSecondBounds.length; i++) {
+            if (potentialSecondBounds[i].pressure === minPressure) {
+                matchingRows.push(potentialSecondBounds[i]);
+            }
+        }
         
         // Sort by test_date desc and take the first one
-        matchingRows.sort((a, b) => new Date(b.test_date) - new Date(a.test_date));
-        secondBound.push(matchingRows[0]);
+        matchingRows.sort(function(a, b) {
+            return new Date(b.test_date) - new Date(a.test_date);
+        });
+        
+        if (matchingRows.length > 0) {
+            secondBound.push(matchingRows[0]);
+        }
     }
     
     // If there's an exact match, use it
@@ -366,19 +414,23 @@ if (interpolatedValues.length === 0) {
 }
 
 // Round values and return the result
-const result = interpolatedValues.map(row => ({
-    PRESSURE: row.pressure !== null ? Math.round(row.pressure * 100000) / 100000 : null,
-    OIL_FORMATION_VOLUME_FACTOR: row.oil_formation_volume_factor !== null ? Math.round(row.oil_formation_volume_factor * 100000) / 100000 : null,
-    GAS_FORMATION_VOLUME_FACTOR: row.gas_formation_volume_factor !== null ? Math.round(row.gas_formation_volume_factor * 100000) / 100000 : null,
-    WATER_FORMATION_VOLUME_FACTOR: row.water_formation_volume_factor !== null ? Math.round(row.water_formation_volume_factor * 100000) / 100000 : null,
-    SOLUTION_GAS_OIL_RATIO: row.solution_gas_oil_ratio !== null ? Math.round(row.solution_gas_oil_ratio * 100000) / 100000 : null,
-    VOLATIZED_OIL_GAS_RATIO: row.volatized_oil_gas_ratio !== null ? Math.round(row.volatized_oil_gas_ratio * 100000) / 100000 : null,
-    VISCOSITY_OIL: row.viscosity_oil !== null ? Math.round(row.viscosity_oil * 100000) / 100000 : null,
-    VISCOSITY_WATER: row.viscosity_water !== null ? Math.round(row.viscosity_water * 100000) / 100000 : null,
-    VISCOSITY_GAS: row.viscosity_gas !== null ? Math.round(row.viscosity_gas * 100000) / 100000 : null,
-    INJECTED_GAS_FORMATION_VOLUME_FACTOR: row.injected_gas_formation_volume_factor !== null ? Math.round(row.injected_gas_formation_volume_factor * 100000) / 100000 : null,
-    INJECTED_WATER_FORMATION_VOLUME_FACTOR: row.injected_water_formation_volume_factor !== null ? Math.round(row.injected_water_formation_volume_factor * 100000) / 100000 : null
-}));
+var result = [];
+for (var i = 0; i < interpolatedValues.length; i++) {
+    var row = interpolatedValues[i];
+    result.push({
+        PRESSURE: row.pressure !== null ? Math.round(row.pressure * 100000) / 100000 : null,
+        OIL_FORMATION_VOLUME_FACTOR: row.oil_formation_volume_factor !== null ? Math.round(row.oil_formation_volume_factor * 100000) / 100000 : null,
+        GAS_FORMATION_VOLUME_FACTOR: row.gas_formation_volume_factor !== null ? Math.round(row.gas_formation_volume_factor * 100000) / 100000 : null,
+        WATER_FORMATION_VOLUME_FACTOR: row.water_formation_volume_factor !== null ? Math.round(row.water_formation_volume_factor * 100000) / 100000 : null,
+        SOLUTION_GAS_OIL_RATIO: row.solution_gas_oil_ratio !== null ? Math.round(row.solution_gas_oil_ratio * 100000) / 100000 : null,
+        VOLATIZED_OIL_GAS_RATIO: row.volatized_oil_gas_ratio !== null ? Math.round(row.volatized_oil_gas_ratio * 100000) / 100000 : null,
+        VISCOSITY_OIL: row.viscosity_oil !== null ? Math.round(row.viscosity_oil * 100000) / 100000 : null,
+        VISCOSITY_WATER: row.viscosity_water !== null ? Math.round(row.viscosity_water * 100000) / 100000 : null,
+        VISCOSITY_GAS: row.viscosity_gas !== null ? Math.round(row.viscosity_gas * 100000) / 100000 : null,
+        INJECTED_GAS_FORMATION_VOLUME_FACTOR: row.injected_gas_formation_volume_factor !== null ? Math.round(row.injected_gas_formation_volume_factor * 100000) / 100000 : null,
+        INJECTED_WATER_FORMATION_VOLUME_FACTOR: row.injected_water_formation_volume_factor !== null ? Math.round(row.injected_water_formation_volume_factor * 100000) / 100000 : null
+    });
+}
 
 return result;
 $$;
