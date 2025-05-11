@@ -3,19 +3,19 @@ CREATE OR REPLACE VIEW RMDE_SAM_ACC.INTERPOLATE_PVT_COMPLETION_TEST_VIEW
 AS
 WITH PVTwithEndDate AS (
     SELECT
-        ID_COMPLETION,
-        TEST_DATE,
-        PRESSURE,
-        OIL_FORMATION_VOLUME_FACTOR,
-        GAS_FORMATION_VOLUME_FACTOR,
-        WATER_FORMATION_VOLUME_FACTOR,
-        SOLUTION_GAS_OIL_RATIO,
-        VOLATIZED_OIL_GAS_RATIO,
-        VISCOSITY_OIL,
-        VISCOSITY_WATER,
-        VISCOSITY_GAS,
-        INJECTED_GAS_FORMATION_VOLUME_FACTOR,
-        INJECTED_WATER_FORMATION_VOLUME_FACTOR,
+        cpc.ID_COMPLETION,
+        cpc.TEST_DATE,
+        cpc.PRESSURE,
+        cpc.OIL_FORMATION_VOLUME_FACTOR,
+        cpc.GAS_FORMATION_VOLUME_FACTOR,
+        cpc.WATER_FORMATION_VOLUME_FACTOR,
+        cpc.SOLUTION_GAS_OIL_RATIO,
+        cpc.VOLATIZED_OIL_GAS_RATIO,
+        cpc.VISCOSITY_OIL,
+        cpc.VISCOSITY_WATER,
+        cpc.VISCOSITY_GAS,
+        cpc.INJECTED_GAS_FORMATION_VOLUME_FACTOR,
+        cpc.INJECTED_WATER_FORMATION_VOLUME_FACTOR,
         COALESCE(
             (SELECT MIN(TEST_DATE)
              FROM RMDE_SAM_ACC.COMPLETION_PVT_CHARACTERISTICS cpvt
@@ -23,14 +23,18 @@ WITH PVTwithEndDate AS (
                AND cpvt.ID_COMPLETION = cpc.ID_COMPLETION),
             '9999-12-31'::DATE
         ) AS END_DATE,
-        completion AS INPUT_COMPLETION,
-        pressure AS INPUT_PRESSURE,
-        vrr_date AS INPUT_VRR_DATE
+        cpc.ID_COMPLETION AS INPUT_COMPLETION,
+        pp.PRESSURE AS INPUT_PRESSURE,
+        pp.DATE AS INPUT_VRR_DATE
     FROM RMDE_SAM_ACC.COMPLETION_PVT_CHARACTERISTICS cpc
-    CROSS JOIN (SELECT DISTINCT ID_COMPLETION AS completion, PRESSURE AS pressure, DATE AS vrr_date 
-                FROM RMDE_SAM_ACC.PATTERN_PRESSURE) inputs
-    WHERE ID_COMPLETION = completion
-      AND TEST_DATE <= LAST_DAY(vrr_date)
+    CROSS JOIN (
+        SELECT DISTINCT p.PRESSURE, p.DATE, f.ID_COMPLETION
+        FROM RMDE_SAM_ACC.PATTERN_PRESSURE p
+        JOIN RMDE_SAM_ACC.PATTERN_CONTRIBUTION_FACTOR f
+            ON p.ID_PATTERN = f.ID_PATTERN
+    ) pp
+    WHERE cpc.ID_COMPLETION = pp.ID_COMPLETION
+      AND cpc.TEST_DATE <= LAST_DAY(pp.DATE)
 ),
 ExactMatch AS (
     SELECT
@@ -417,7 +421,11 @@ FROM (
                 COALESCE(daily_volume.ALLOC_GAS_VOL_KSCF * 1000 * split_factors.FACTOR, daily_volume.ALLOC_GAS_VOL_KSCF * 1000, 0) AS GAS_WELL_GAS_VOLUME,
                 COALESCE(daily_volume.THEOR_GAS_INJ_VOL_KSCF * 1000 * split_factors.FACTOR, daily_volume.THEOR_GAS_INJ_VOL_KSCF * 1000, 0) AS GAS_INJ_VOLUME,
                 CASE
-                    WHEN Amount_Type = 'Production' THEN COALESCE(FREE_GAS * split_factors.FACTOR * pvt.GAS_FORMATION_VOLUME_FACTOR, FREE_GAS, 0)
+                    WHEN Amount_Type = 'Production' THEN 
+                        COALESCE(
+                            (daily_volume.THEOR_GAS_VOL_KSCF * 1000 / NULLIF(daily_volume.THEOR_OIL_VOL_STB, 0) - pvt.SOLUTION_GAS_OIL_RATIO) * daily_volume.THEOR_OIL_VOL_STB * split_factors.FACTOR * pvt.GAS_FORMATION_VOLUME_FACTOR,
+                            0
+                        )
                     ELSE 0
                 END AS FREE_GAS,
                 split_factors.FACTOR,
