@@ -1,0 +1,69 @@
+erDiagram
+    Pattern {
+        string ID_PATTERN PK
+        date DATE "Temporal Key"
+        string ID_PATTERN_VRR "Derived: ID_PATTERN + DATE"
+        decimal PRESSURE
+    }
+
+    Production_Volume {
+        decimal OIL_VOLUME_STB
+        decimal OIL_VOLUME_RES_BBL
+        decimal WATER_VOLUME_STB
+        decimal WATER_VOLUME_RES_BBL
+        decimal GAS_VOLUME_SCF
+        decimal FREE_GAS
+        decimal PRODUCTION_VOLUME_RES_BBL
+        decimal CUMULATIVE_PRODUCTION_VOLUME_RES_BBL "NULL"
+        decimal CUMULATIVE_OIL_PRODUCTION_VOLUME_RES_BBL "NULL"
+        decimal CUMULATIVE_WATER_PRODUCTION_VOLUME_RES_BBL "NULL"
+    }
+
+    Injection_Volume {
+        decimal WATER_INJ_VOLUME_STB
+        decimal WATER_INJ_VOLUME_RES_BBL
+        decimal GAS_INJ_VOLUME_SCF
+        decimal GAS_INJ_VOLUME_RES_BBL
+        decimal INJECTION_VOLUME_RES_BBL
+        decimal CUMULATIVE_INJECTION_VOLUME_RES_BBL "NULL"
+        decimal CUMULATIVE_WATER_INJECTION_VOLUME_RES_BBL "NULL"
+        decimal CUMULATIVE_GAS_INJECTION_VOLUME_RES_BBL "NULL"
+    }
+
+    VRR {
+        decimal VRR "Injection/Production Ratio"
+        decimal CUMULATIVE_VRR "Cumulative Ratio"
+    }
+
+    Completion {
+        string ID_COMPLETION PK
+        decimal FACTOR "via PATTERN_CONTRIBUTION_FACTOR"
+    }
+
+    PVT_Properties {
+        decimal OIL_FORMATION_VOLUME_FACTOR
+        decimal WATER_FORMATION_VOLUME_FACTOR
+        decimal GAS_FORMATION_VOLUME_FACTOR
+        decimal INJECTED_GAS_FORMATION_VOLUME_FACTOR
+        decimal INJECTED_WATER_FORMATION_VOLUME_FACTOR
+        decimal SOLUTION_GAS_OIL_RATIO
+        decimal VOLATIZED_OIL_GAS_RATIO
+        decimal VISCOSITY_OIL
+        decimal VISCOSITY_WATER
+        decimal VISCOSITY_GAS
+    }
+
+    Pattern_Pressure {
+        decimal PRESSURE
+        date DATE
+        date END_DATE
+    }
+
+    %% Relationships with cardinality labels
+    Pattern ||--o{ Production_Volume : "1:N Aggregated by ID_PATTERN, DATE"
+    Pattern ||--|| Injection_Volume : "1:1 Same ID_PATTERN, DATE"
+    Production_Volume ||--|| VRR : "Derived from Production & Injection"
+    Injection_Volume ||--|| VRR : "Derived from Production & Injection"
+    Pattern }o--o{ Completion : "N:1 Pattern has many Completions via Contribution Factors"
+    Completion ||--o{ PVT_Properties : "1:N Completion has many PVT records"
+    Pattern }o--o{ Pattern_Pressure : "N:1 Pattern has many Pressure records"
